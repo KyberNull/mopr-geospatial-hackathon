@@ -1,6 +1,6 @@
 import torch
 
-def dice_loss(pred, target, num_classes, smooth=1e-8):
+def dice_loss(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smooth=1e-8):
     pred = torch.softmax(pred, dim=1)
 
     valid_mask = (target != 255)
@@ -23,7 +23,7 @@ def dice_loss(pred, target, num_classes, smooth=1e-8):
     dice = (dice * class_present).sum(dim=1) / class_present.sum(dim=1).clamp_min(1)
     return 1 - dice.mean()
 
-def compute_means(pred, target, num_classes, smooth = 1e-8):
+def compute_means(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smooth = 1e-8):
     target = target.long()
     valid_mask = (target != 255)
     safe_target = target.clone()

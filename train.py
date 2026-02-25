@@ -5,8 +5,7 @@ import os
 import signal
 import sys
 import torch
-from torch.amp.autocast_mode import autocast
-from torch import nn, optim, GradScaler
+from torch import nn, optim, autocast
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from tqdm import tqdm
@@ -15,11 +14,11 @@ from transforms import IMAGE_TRANSFORM, MASK_TRANSFORM
 
 # TODO: Make parameters depend on .env/config.yaml/something similar for better flexibility.
 #===----CONSTANTS----===#
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.0005 #TODO: Add learning rate scheduler and make this more dynamic.
 MODEL_PATH = 'model.pt'
-NUM_BATCHES = 16
+NUM_BATCHES = 24
 NUM_CLASSES = 21
-NUM_EPOCHS = 60
+NUM_EPOCHS = 300
 NUM_WORKERS = min(4, os.cpu_count() or 1)
 #===-----------------===#
 
@@ -41,14 +40,14 @@ def save_checkpoint(model, optimizer, epoch, path):
     logging.info("Checkpoint saved.")
 
 def main(device, model_path):
-    scaler = GradScaler(enabled=(device.type == "cuda"))
+    scaler = torch.GradScaler(enabled=(device.type == "cuda"))
 
     trainData = datasets.VOCSegmentation('./data', '2012', image_set='train', transform=IMAGE_TRANSFORM, target_transform=MASK_TRANSFORM)
     trainLoader = DataLoader(dataset=trainData, batch_size=NUM_BATCHES, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
 
     model = UNet(NUM_CLASSES).to(device)
     model = torch.compile(model)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss(ignore_index=255)
 
     start_epoch = 0
