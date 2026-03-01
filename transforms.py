@@ -6,6 +6,9 @@ from torchvision.transforms import v2
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as F
 
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
 
 class VOCEvalTransforms:
     '''Transforms for evaluation, including resizing and type conversions.'''
@@ -27,7 +30,7 @@ class VOCEvalTransforms:
 
 class VOCTrainTransforms:
     '''Data augmentation transforms for training, including random resized cropping, horizontal flipping, and rotation.'''
-    def __init__(self, size=(256, 256), scale=(0.08, 1.0), ratio=(3 / 4, 4 / 3), rotation_degrees=10):
+    def __init__(self, size=(256, 256), scale=(0.5, 1.0), ratio=(3 / 4, 4 / 3), rotation_degrees=5):
         self.size = size
         self.scale = scale
         self.ratio = ratio
@@ -68,6 +71,7 @@ class VOCTrainTransforms:
         #Converting the image to float32 and mask to int64 as only one channel in mask
         image = F.to_image(image)
         image = F.to_dtype(image, torch.float32, scale=True)
+        image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
         mask = F.to_image(mask)
         mask = F.to_dtype(mask, torch.int64, scale=False)
