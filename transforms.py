@@ -1,56 +1,80 @@
-import albumentations as A
-import cv2
-import numpy as np
-import torch
-from torchvision import datasets
+"""Data Augmentation and preprocessing transforms for VOC segmentation."""
 
-SIZE = (256, 256)
+import random
+import torch
+from torchvision.transforms import v2
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.v2 import functional as F
+
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
-VOCEvalTransforms = A.Compose([
-    A.SmallestMaxSize(max_size=SIZE[0], interpolation=cv2.INTER_LINEAR),
-    # Takes a center slice of the image and important stuff is mostly near the center anyways
-    A.CenterCrop(height=SIZE[0], width=SIZE[1]),
-    A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    A.ToTensorV2(),
-])
+class VOCEvalTransforms:
+    '''Transforms for evaluation, including resizing and type conversions.'''
+    #Does only resize and type conversions for consistent evaluation
+    def __init__(self, size=(256, 256)):
+        self.size = size
 
-VOCTrainTransforms = A.Compose([
-    # Takes an image and scales the shorter side to 256 * 2 and scales the longer side with the same ratio (keeping the aspact ratio)
-    A.SmallestMaxSize(max_size=SIZE[0] * 2, interpolation=cv2.INTER_LINEAR),
-    A.RandomCrop(height=SIZE[0], width=SIZE[1]),
-    A.HorizontalFlip(p=0.5),
-    A.Rotate(limit=5, interpolation=cv2.INTER_LINEAR, border_mode=cv2.BORDER_CONSTANT, fill=0, fill_mask=255, p=0.5),
-    A.RandomBrightnessContrast(p=0.3),
-    # A.GaussNoise(std_range=(0.1, 0.2), p=0.2),
-    A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    A.ToTensorV2(),
-])
+    def __call__(self, image: torch.Tensor, mask: torch.Tensor):
+        image = F.resize(image, self.size, interpolation=InterpolationMode.BILINEAR, antialias=True)
+        mask = F.resize(mask, self.size, interpolation=InterpolationMode.NEAREST)
 
-class AlbumentationsVOC(datasets.VOCSegmentation):
-    def __init__(self, root, year='2012', image_set='train', transforms=None):
-        super().__init__(root, year=year, image_set=image_set, transform=None)
-        self.Atransforms = transforms
+        image = F.to_image(image)
+        image = F.to_dtype(image, torch.float32, scale=True)
+        image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
+        mask = F.to_image(mask)
+        mask = F.to_dtype(mask, torch.int64, scale=False)
 
-    def __len__(self):
-        return super().__len__()    
+        return image, mask
 
+class VOCTrainTransforms:
+    '''Data augmentation transforms for training, including random resized cropping, horizontal flipping, and rotation.'''
+    def __init__(self, size=(256, 256), scale=(0.8, 1.0), ratio=(3 / 4, 4 / 3), rotation_degrees=5):
+        self.size = size
+        self.scale = scale
+        self.ratio = ratio
+        self.rotation_degrees = rotation_degrees
 
-    def __getitem__(self, index):
-        image, mask = super().__getitem__(index)
-        image = np.array(image.convert('RGB'))
-        mask = np.array(mask)
+    def __call__(self, image: torch.Tensor, mask: torch.Tensor):
+        #Gets the paramters and resizes and interpolates the images and masks
+        i, j, h, w = v2.RandomResizedCrop.get_params(image, self.scale, self.ratio)
+        image = F.resized_crop(
+            image,
+            top=i,
+            left=j,
+            height=h,
+            width=w,
+            size=self.size,
+            interpolation=InterpolationMode.BILINEAR,
+            antialias=True,
+        )
+        mask = F.resized_crop(
+            mask,
+            top=i,
+            left=j,
+            height=h,
+            width=w,
+            size=self.size,
+            interpolation=InterpolationMode.NEAREST,
+        )
 
-        if self.Atransforms is not None:
-            augmented = self.Atransforms(image=image, mask=mask)
-            image = augmented['image']
-            mask = augmented['mask']
-        else:
-            # Convert numpy arrays to torch tensors (C, H, W) and proper dtypes
-            image = torch.from_numpy(image).permute(2, 0, 1).float().div(255.0)
-            mask = torch.from_numpy(mask).long()
+        if random.random() < 0.5:
+            image = F.horizontal_flip(image)
+            mask = F.horizontal_flip(mask)
 
-        return image, mask.long()
+        #Implementing the rotation for both image and mask, mask the fill is 255 by the dataset VOCSegmentation and image it is 0 (background)
+        angle = random.uniform(-self.rotation_degrees, self.rotation_degrees)
+        image = F.rotate(image, angle=angle, interpolation=InterpolationMode.BILINEAR, fill=0) #type: ignore
+        mask = F.rotate(mask, angle=angle, interpolation=InterpolationMode.NEAREST, fill=255) #type: ignore
+
+        #Converting the image to float32 and mask to int64 as only one channel in mask
+        image = F.to_image(image)
+        image = F.to_dtype(image, torch.float32, scale=True)
+        image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
+
+        mask = F.to_image(mask)
+        mask = F.to_dtype(mask, torch.int64, scale=False)
+
+        return image, mask

@@ -14,7 +14,7 @@ from torch import nn, optim, autocast
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from tqdm import tqdm
-from transforms import VOCTrainTransforms, AlbumentationsVOC, VOCEvalTransforms
+from transforms import VOCTrainTransforms, VOCEvalTransforms
 
 config = get_train_config()
 LEARNING_RATE = config.learning_rate
@@ -47,9 +47,9 @@ def main(device, model_path):
     # GradScaler is only useful on CUDA where float16 gradients can underflow.
     scaler = torch.GradScaler(enabled=(device.type == "cuda"))
 
-    trainDataset = AlbumentationsVOC('./data', '2012', image_set='train', transforms=VOCTrainTransforms)
+    trainDataset = datasets.VOCSegmentation('./data', year = '2012', image_set = 'train', transforms = VOCTrainTransforms())
     trainLoader = DataLoader(dataset=trainDataset, batch_size=NUM_BATCHES, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
-    vailidationDataset = AlbumentationsVOC('./data', '2012', image_set='val', transforms=VOCEvalTransforms)
+    vailidationDataset = datasets.VOCSegmentation('./data', year = '2012', image_set = 'val', transforms = VOCEvalTransforms())
     validationLoader = DataLoader(dataset=vailidationDataset, batch_size=NUM_BATCHES, shuffle=False, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
 
     model = UNet(NUM_CLASSES).to(device)
