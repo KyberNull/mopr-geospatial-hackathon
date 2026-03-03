@@ -1,6 +1,6 @@
 """Training loop for the segmentation model."""
 
-from env_config import get_train_config
+from config import get_train_config
 import logging
 from losses import dice_loss
 from model import UNet
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, handle_shutdown)
 
     device = torch.device('cpu')
-    
+
     if torch.cuda.is_available():
         device = torch.device('cuda')
         pin_memory = True

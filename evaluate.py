@@ -1,6 +1,6 @@
 """Evaluation and qualitative visualization utilities for model predictions."""
 
-from env_config import get_eval_config
+from config import get_eval_config
 import logging
 from losses import compute_means
 import matplotlib.pyplot as plt
@@ -114,10 +114,14 @@ def main():
 if __name__ == "__main__":
 
     device = torch.device("cpu")
+
     if torch.cuda.is_available():
         device = torch.device("cuda")
         pin_memory = True
+        torch.backends.cudnn.benchmark = True
+
     elif torch.mps.is_available(): device = torch.device("mps")
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
