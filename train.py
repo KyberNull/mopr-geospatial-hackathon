@@ -18,6 +18,7 @@ from transforms import VOCTrainTransforms, VOCEvalTransforms
 
 config = get_train_config()
 LEARNING_RATE = config.learning_rate
+WEIGHT_DECAY = config.weight_decay
 WARMUP_EPOCHS = config.warmup_epochs
 RESTART_CYCLE_EPOCHS = config.restart_cycle_epochs
 RESTART_CYCLE_MULT = config.restart_cycle_mult
@@ -33,6 +34,24 @@ shutdown_requested = False
 pin_memory = False
 amp_dtype = torch.bfloat16
 logger = logging.getLogger(__name__)
+
+
+def get_adamw_param_groups(model: nn.Module):
+    decay_params = []
+    no_decay_params = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if param.ndim <= 1 or name.endswith(".bias"):
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    return [
+        {"params": decay_params, "weight_decay": WEIGHT_DECAY},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
 
 def handle_shutdown(sig, frame):
     global shutdown_requested
@@ -85,8 +104,8 @@ def main(device, model_path):
     validationLoader = DataLoader(dataset=vailidationDataset, batch_size=NUM_BATCHES, shuffle=False, num_workers=NUM_WORKERS, pin_memory=pin_memory)
 
     model = UNet(NUM_CLASSES).to(device)
+    optimizer = optim.AdamW(get_adamw_param_groups(model), lr=LEARNING_RATE)
     model = torch.compile(model)
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     warmup_steps = min(max(0, WARMUP_EPOCHS * len(trainLoader)), max(0, NUM_EPOCHS * len(trainLoader) - 1))
     restart_cycle_steps = max(1, RESTART_CYCLE_EPOCHS * len(trainLoader))
     restart_cycle_mult = max(1, RESTART_CYCLE_MULT)
