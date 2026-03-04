@@ -10,7 +10,7 @@ import signal
 import sys
 import torch
 from torch import nn, optim, autocast
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from tqdm import tqdm
@@ -20,8 +20,6 @@ config = get_train_config()
 LEARNING_RATE = config.learning_rate
 WEIGHT_DECAY = config.weight_decay
 WARMUP_EPOCHS = config.warmup_epochs
-RESTART_CYCLE_EPOCHS = config.restart_cycle_epochs
-RESTART_CYCLE_MULT = config.restart_cycle_mult
 MODEL_PATH = config.model_path
 NUM_BATCHES = config.num_batches
 NUM_CLASSES = config.num_classes
@@ -107,13 +105,10 @@ def main(device, model_path):
     optimizer = optim.AdamW(get_adamw_param_groups(model), lr=LEARNING_RATE)
     model = torch.compile(model)
     warmup_steps = min(max(0, WARMUP_EPOCHS * len(trainLoader)), max(0, NUM_EPOCHS * len(trainLoader) - 1))
-    restart_cycle_steps = max(1, RESTART_CYCLE_EPOCHS * len(trainLoader))
-    restart_cycle_mult = max(1, RESTART_CYCLE_MULT)
-    
-    scheduler = CosineAnnealingWarmRestarts(
+
+    scheduler = CosineAnnealingLR(
             optimizer,
-            T_0=restart_cycle_steps,
-            T_mult=restart_cycle_mult,
+            T_max=NUM_EPOCHS * len(trainLoader) - warmup_steps,
             eta_min=LEARNING_RATE * 0.1,
         )
     if warmup_steps > 0:
@@ -167,9 +162,13 @@ def main(device, model_path):
                 loss += dice_loss(prediction, output, NUM_CLASSES)
             
             scaler.scale(loss).backward()
+            scale_before_step = scaler.get_scale()
             scaler.step(optimizer)
-            scheduler.step()
             scaler.update()
+            scale_after_step = scaler.get_scale()
+
+            if scale_after_step >= scale_before_step:
+                scheduler.step()
 
             running_loss += loss.item()
 
