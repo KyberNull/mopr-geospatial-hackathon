@@ -1,9 +1,11 @@
 """Training loop for the segmentation model."""
 
 from config import get_train_config
+from itertools import cycle
 import logging
-from losses import dice_loss
+from losses import dice_loss, compute_means
 from model import UNet
+import os
 from rich.logging import RichHandler
 import signal
 import sys
@@ -13,7 +15,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from tqdm import tqdm
-from transforms import VOCTrainTransforms
+from transforms import VOCTrainTransforms, VOCEvalTransforms
 
 config = get_train_config()
 LEARNING_RATE = config.learning_rate
@@ -22,6 +24,8 @@ NUM_BATCHES = config.num_batches
 NUM_CLASSES = config.num_classes
 NUM_EPOCHS = config.num_epochs
 NUM_WORKERS = config.num_workers
+VAL_INTERVAL = config.val_interval
+NUM_VAL_SAMPLES = config.num_val_samples
 
 shutdown_requested = False
 pin_memory = False
@@ -42,17 +46,41 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch, path):
         "scaler_state": scaler.state_dict(),
     }, path)
 
+def validate(model, val_iterator, device, criterion):
+    model.eval()
+    running_val_loss = 0.0
+    total_iou = 0.0
+    with torch.no_grad():
+        for i in range(NUM_VAL_SAMPLES):
+            val_input, val_output = next(val_iterator)
+
+            val_input, val_output = val_input.to(device, non_blocking=True), val_output.squeeze(1).to(device, non_blocking=True).long()
+
+            val_prediction = model(val_input)
+            val_loss = criterion(val_prediction, val_output)
+
+            running_val_loss += val_loss.item()
+
+            _, iou = compute_means(val_prediction, val_output, NUM_CLASSES)
+            total_iou += iou
+
+        total_iou /= NUM_VAL_SAMPLES
+
+        running_val_loss /= NUM_VAL_SAMPLES
+            
+        logging.info(f"mCEL: {running_val_loss:.4f}")
+        logging.info(f"mIoU: {total_iou:.4f}")
+
+        model.train()
+
 def main(device, model_path):
     # GradScaler is only useful on CUDA where float16 gradients can underflow.
     scaler = torch.GradScaler(enabled=(device.type == "cuda"))
 
-    trainData = datasets.VOCSegmentation(
-        './data',
-        '2012',
-        image_set='train',
-        transforms=VOCTrainTransforms(),
-    )
-    trainLoader = DataLoader(dataset=trainData, batch_size=NUM_BATCHES, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
+    trainDataset = datasets.VOCSegmentation('./data', year = '2012', image_set = 'train', transforms = VOCTrainTransforms())
+    trainLoader = DataLoader(dataset=trainDataset, batch_size=NUM_BATCHES, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
+    vailidationDataset = datasets.VOCSegmentation('./data', year = '2012', image_set = 'val', transforms = VOCEvalTransforms())
+    validationLoader = DataLoader(dataset=vailidationDataset, batch_size=NUM_BATCHES, shuffle=False, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
 
     model = UNet(NUM_CLASSES).to(device)
     model = torch.compile(model)
@@ -61,6 +89,7 @@ def main(device, model_path):
     criterion = nn.CrossEntropyLoss(ignore_index=255)
 
     start_epoch = 0
+    val_iterator = cycle(validationLoader) # Cycle loops around the iterable and keeps memory of the last position.
 
     try:
         # Resume model, optimizer, scheduler, and scaler states to continue training seamlessly.
@@ -111,6 +140,10 @@ def main(device, model_path):
             avg_loss = running_loss / (batch + 1)
             epoch_bar.set_postfix(loss=avg_loss, lr=scheduler.get_last_lr()[0]) # Shows AVG Loss NOT Batch Loss
         
+        # Validation loop
+        if (epoch + 1) % VAL_INTERVAL == 0:
+            validate(model, val_iterator, device, criterion)
+        
         #TODO: Maybe save best model and current model
         save_checkpoint(model=model, optimizer=optimizer, scheduler=scheduler, scaler=scaler, epoch=epoch, path=MODEL_PATH)
     logger.info("Training complete. Checkpoint saved.")
@@ -138,4 +171,5 @@ if __name__ == "__main__":
         handlers=[RichHandler()],
         force=True,
     )
+
     main(device, MODEL_PATH)
