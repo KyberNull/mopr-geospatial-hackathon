@@ -93,7 +93,7 @@ def validate(model, validation_loader, device, criterion):
 
             with autocast(device_type=device.type, dtype=amp_dtype):
                 val_prediction = model(val_input)
-            val_loss = criterion(val_prediction, val_output)
+                val_loss = criterion(val_prediction, val_output)
 
             running_val_loss += val_loss.item()
 
