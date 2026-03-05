@@ -60,16 +60,22 @@ class MBConvBlock(nn.Module):
         return self.block(x)
 
 class Up(nn.Module):
-    '''An upsampling block that uses transposed convolution,
+    '''An upsampling block that uses bilinear upsampling,
     concatenates with the matching skip connection, and refines features with ConvBlock.
     '''
     def __init__(self, in_ch: int, skip_ch: int, out_ch: int):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2, bias=False)
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.reduce = nn.Conv2d(in_ch, in_ch // 2, kernel_size=1, bias=False)
         self.conv = MBConvBlock(in_ch // 2 + skip_ch, out_ch)
 
     def forward(self, x, skip):
         x = self.up(x)
+        x = self.reduce(x)
+        if x.shape[2:] != skip.shape[2:]:
+            x = torch.nn.functional.interpolate(
+                x, size=skip.shape[2:], mode='bilinear', align_corners=False
+            )
         x = torch.cat([x, skip], dim=1)
         return self.conv(x)
 
@@ -88,7 +94,7 @@ class UNet(nn.Module):
         self.up4 = Up(128, 24, 64)
 
         self.head = nn.Conv2d(64, num_classes, 1)
-        self.logits_up = nn.ConvTranspose2d(num_classes, num_classes, kernel_size=2, stride=2)
+        self.logits_up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         self.context = MBConvBlock(1280, 1280)  # Context module at the bottleneck
 
     def forward(self, x):

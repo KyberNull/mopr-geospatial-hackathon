@@ -13,7 +13,7 @@ class EvalTransforms:
     '''Transforms for evaluation, including resizing and type conversions. 
         Does only resize and type conversions for consistent evaluation.
     '''
-    def __init__(self, size=(256, 256)):
+    def __init__(self, size=(384, 384)):
         self.size = size
 
     def __call__(self, image: torch.Tensor, mask: torch.Tensor):
@@ -33,7 +33,7 @@ class TrainTransforms:
     '''Data augmentation transforms for training,
     including random resized cropPIng, horizontal flipping, and rotation.
     '''
-    def __init__(self, size=(256, 256), scale=(0.5, 1.), ratio=(1, 1), rotation_degrees=5):
+    def __init__(self, size=(384, 384), scale=(0.5, 1.5), ratio=(1, 1), rotation_degrees=5):
         self.size = size
         self.scale = scale
         self.ratio = ratio
