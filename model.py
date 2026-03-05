@@ -14,31 +14,44 @@ return_nodes = {
     }
 encoder = feature_extraction.create_feature_extractor(backbone, return_nodes=return_nodes)
 
-class ConvBlock(nn.Module):
+class MBConvBlock(nn.Module):
     '''
-    A convolutional block consisting of two convolutional layers, each followed by group normalization and ReLU activation.
-    This enhances representation while having less computation than a bigger kernel size.
+    Mobile inverted bottleneck block.
+    expand → depthwise → project
     '''
-    def __init__(self, in_ch: int, out_ch: int, groups=4):
+
+    def __init__(self, in_ch: int, out_ch: int, expand_ratio=4, groups=4):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False)
-        self.gn1 = nn.GroupNorm(groups, out_ch)
-        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False)
-        self.gn2 = nn.GroupNorm(groups, out_ch)
-        self.act = nn.ReLU(inplace=True)
+
+        mid_ch = in_ch * expand_ratio
+
+        self.block = nn.Sequential(
+            # expand
+            nn.Conv2d(in_ch, mid_ch, 1, bias=False),
+            nn.GroupNorm(groups, mid_ch),
+            nn.SiLU(inplace=True),
+
+            # depthwise
+            nn.Conv2d(mid_ch, mid_ch, 3, padding=1, groups=mid_ch, bias=False),
+            nn.GroupNorm(groups, mid_ch),
+            nn.SiLU(inplace=True),
+
+            # project
+            nn.Conv2d(mid_ch, out_ch, 1, bias=False),
+            nn.GroupNorm(groups, out_ch)
+        )
 
     def forward(self, x):
-        x = self.act(self.gn1(self.conv1(x)))
-        x = self.act(self.gn2(self.conv2(x)))
-        return x
+        return self.block(x)
 
 class Up(nn.Module):
     '''An upsampling block that uses transposed convolution,
-    concatenates with the matching skip connection, and refines features with ConvBlock.'''
+    concatenates with the matching skip connection, and refines features with ConvBlock.
+    '''
     def __init__(self, in_ch: int, skip_ch: int, out_ch: int):
         super().__init__()
         self.up = nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2, bias=False)
-        self.conv = ConvBlock(in_ch // 2 + skip_ch, out_ch)
+        self.conv = MBConvBlock(in_ch // 2 + skip_ch, out_ch)
 
     def forward(self, x, skip):
         x = self.up(x)
@@ -61,6 +74,7 @@ class UNet(nn.Module):
 
         self.head = nn.Conv2d(64, num_classes, 1)
         self.logits_up = nn.ConvTranspose2d(num_classes, num_classes, kernel_size=2, stride=2)
+        self.context = MBConvBlock(1280, 1280)  # Context module at the bottleneck
 
     def forward(self, x):
         input_size = x.shape[2:]
@@ -71,8 +85,10 @@ class UNet(nn.Module):
         s3 = features['skip3']
         s4 = features['skip4']
         b = features['bottleneck']
+        
+        context = self.context(b)
 
-        x = self.up1(b, s4)
+        x = self.up1(context, s4)
         x = self.up2(x, s3)
         x = self.up3(x, s2)
         x = self.up4(x, s1)
