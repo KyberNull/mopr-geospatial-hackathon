@@ -102,7 +102,7 @@ class UNet(nn.Module):
     
 class ASPP(nn.Module):
 
-    def __init__(self, in_ch, out_ch, rates=(3, 6, 9)):
+    def __init__(self, in_ch, out_ch, rates=(3,6,9)):
         super().__init__()
 
         self.branch1 = nn.Sequential(
@@ -121,8 +121,12 @@ class ASPP(nn.Module):
             nn.SiLU(inplace=True)
         )
 
+        concat_ch = out_ch * 5
+
+        self.se = SEBlock(concat_ch)
+
         self.project = nn.Sequential(
-            nn.Conv2d(out_ch * 5, in_ch, 1, bias=False),
+            nn.Conv2d(concat_ch, in_ch, 1, bias=False),
             nn.GroupNorm(8, in_ch),
             nn.SiLU(inplace=True)
         )
@@ -141,7 +145,9 @@ class ASPP(nn.Module):
             p5, size=(h, w), mode="bilinear", align_corners=False
         )
 
-        x = torch.cat([p1, p2, p3, p4, p5], dim=1)
+        x = torch.cat([p1,p2,p3,p4,p5], dim=1)
+
+        x = self.se(x)
 
         return self.project(x)
 
@@ -178,3 +184,23 @@ class DilatedMBConv(nn.Module):
     def forward(self, x):
         return self.block(x)
     
+class SEBlock(nn.Module):
+
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
+        self.fc = nn.Sequential(
+            nn.Conv2d(channels, channels // reduction, 1),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+
+        w = self.pool(x)
+        w = self.fc(w)
+
+        return x * w
