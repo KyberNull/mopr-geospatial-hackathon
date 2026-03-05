@@ -49,7 +49,7 @@ def test_model():
 
     model.eval()
     count = 0
-    total_DC = 0
+    total_CEL = 0
     total_iou = 0
 
     testing_bar = tqdm(testLoader, desc = "Evaluating Model", leave=True)
@@ -74,7 +74,7 @@ def test_model():
             val_loss = criterion(preds, target)
             _, iou = compute_means(preds, target, NUM_CLASSES)
             total_CEL += val_loss.item()
-            total_iou += iou
+            total_iou += iou.item()
             count += 1
 
     total_CEL /= count
