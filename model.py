@@ -85,7 +85,7 @@ class UNet(nn.Module):
         s3 = features['skip3']
         s4 = features['skip4']
         b = features['bottleneck']
-        
+
         context = self.context(b)
 
         x = self.up1(context, s4)
@@ -99,3 +99,82 @@ class UNet(nn.Module):
         if x.shape[2:] != input_size:
             x = x[:, :, :input_size[0], :input_size[1]]
         return x
+    
+class ASPP(nn.Module):
+
+    def __init__(self, in_ch, out_ch, rates=(3, 6, 9)):
+        super().__init__()
+
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 1, bias=False),
+            nn.GroupNorm(8, out_ch),
+            nn.SiLU(inplace=True)
+        )
+
+        self.branch2 = DilatedMBConv(in_ch, out_ch, rates[0])
+        self.branch3 = DilatedMBConv(in_ch, out_ch, rates[1])
+        self.branch4 = DilatedMBConv(in_ch, out_ch, rates[2])
+
+        self.pool = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_ch, out_ch, 1, bias=False),
+            nn.SiLU(inplace=True)
+        )
+
+        self.project = nn.Sequential(
+            nn.Conv2d(out_ch * 5, in_ch, 1, bias=False),
+            nn.GroupNorm(8, in_ch),
+            nn.SiLU(inplace=True)
+        )
+
+    def forward(self, x):
+
+        h, w = x.shape[2:]
+
+        p1 = self.branch1(x)
+        p2 = self.branch2(x)
+        p3 = self.branch3(x)
+        p4 = self.branch4(x)
+
+        p5 = self.pool(x)
+        p5 = torch.nn.functional.interpolate(
+            p5, size=(h, w), mode="bilinear", align_corners=False
+        )
+
+        x = torch.cat([p1, p2, p3, p4, p5], dim=1)
+
+        return self.project(x)
+    
+class DilatedMBConv(nn.Module):
+    def __init__(self, in_ch, out_ch, dilation, expand_ratio=4, groups=8):
+        super().__init__()
+
+        mid_ch = in_ch * expand_ratio
+
+        self.block = nn.Sequential(
+            # expand
+            nn.Conv2d(in_ch, mid_ch, 1, bias=False),
+            nn.GroupNorm(groups, mid_ch),
+            nn.SiLU(inplace=True),
+
+            # depthwise dilated
+            nn.Conv2d(
+                mid_ch,
+                mid_ch,
+                3,
+                padding=dilation,
+                dilation=dilation,
+                groups=mid_ch,
+                bias=False
+            ),
+            nn.GroupNorm(groups, mid_ch),
+            nn.SiLU(inplace=True),
+
+            # project
+            nn.Conv2d(mid_ch, out_ch, 1, bias=False),
+            nn.GroupNorm(groups, out_ch),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+    
