@@ -1,6 +1,15 @@
 """Data Augmentation and preprocessing transforms for Segmentation."""
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
-import torch
+SIZE = (384,384)
+
+TrainTransform = A.Compose([
+    
+])
+
+
+"""import torch
 from torchvision.transforms import v2
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as F
@@ -59,4 +68,4 @@ class TrainTransforms:
         mask = F.to_image(mask)
         mask = F.to_dtype(mask, torch.int64, scale=False)
 
-        return image, mask
+        return image, mask"""

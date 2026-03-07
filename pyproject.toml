@@ -5,6 +5,7 @@ description = "An IITT-NiF MoPR hackathon for geospatial intelligence"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "albumentations>=2.0.8",
     "geopandas>=1.1.2",
     "matplotlib>=3.10.8",
     "python-dotenv>=1.1.1",
