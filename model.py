@@ -113,7 +113,7 @@ class UNet(nn.Module):
 
         self.head = nn.Conv2d(64, num_classes, 1)
         self.logits_up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.context = ASPP(1280, 256)  # Context module at the bottleneck
+        self.aspp = ASPP(160, 64)  # Context module at the bottleneck
 
     def forward(self, x):
         input_size = x.shape[2:]
@@ -125,7 +125,7 @@ class UNet(nn.Module):
         s4 = features['skip4']
         b = features['bottleneck']
 
-        b = self.context(b)
+        s4 = self.aspp(s4)  # Enhance bottleneck features with ASPP
 
         x = self.up1(b, s4)
         x = self.up2(x, s3)
@@ -141,7 +141,7 @@ class UNet(nn.Module):
     
 class ASPP(nn.Module):
 
-    def __init__(self, in_ch, out_ch, rates=(1,2,3)):
+    def __init__(self, in_ch, out_ch, rates=(2,4,6)):
         super().__init__()
 
         self.branch1 = nn.Sequential(
