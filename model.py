@@ -4,6 +4,9 @@ import torch
 from torch import nn
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights, feature_extraction
 
+# ===========================
+# Encoder
+# ===========================
 backbone = efficientnet_v2_s(weights=EfficientNet_V2_S_Weights.IMAGENET1K_V1).features
 return_nodes = {
         '1': 'skip1',
@@ -14,66 +17,160 @@ return_nodes = {
     }
 encoder = feature_extraction.create_feature_extractor(backbone, return_nodes=return_nodes)
 
+# ===========================
+# Basic Blocks
+# ===========================
+
 class ConvBlock(nn.Module):
-    '''A simple convolutional block with two Conv2d layers, each followed by GroupNorm and SiLU activation.'''
-    def __init__(self, in_ch: int, out_ch: int):
+    """Two conv layers with GroupNorm + SiLU."""
+    def __init__(self, in_ch, out_ch):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
             nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True),
+            nn.SiLU(inplace=True),
             nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
             nn.GroupNorm(8, out_ch),
-            nn.ReLU(inplace=True)
+            nn.SiLU(inplace=True)
         )
 
     def forward(self, x):
         return self.conv(x)
-
+    
 class MBConvBlock(nn.Module):
-    '''
-    Mobile inverted bottleneck block.
-    expand → depthwise → project
-    '''
-
-    def __init__(
-        self,
-        in_ch: int,
-        out_ch: int,
-        expand_ratio=4,
-        groups=4,
-        dilation: int = 1,
-    ):
+    """Mobile inverted bottleneck: expand → depthwise → project."""
+    def __init__(self, in_ch, out_ch, expand_ratio=4, groups=4, dilation=1):
         super().__init__()
-
         mid_ch = in_ch * expand_ratio
-
         self.block = nn.Sequential(
-            # expand
             nn.Conv2d(in_ch, mid_ch, 1, bias=False),
             nn.GroupNorm(groups, mid_ch),
             nn.SiLU(inplace=True),
-
-            # depthwise
-            nn.Conv2d(
-                mid_ch,
-                mid_ch,
-                3,
-                padding=dilation,
-                dilation=dilation,
-                groups=mid_ch,
-                bias=False,
-            ),
+            nn.Conv2d(mid_ch, mid_ch, 3, padding=dilation, dilation=dilation, groups=mid_ch, bias=False),
             nn.GroupNorm(groups, mid_ch),
             nn.SiLU(inplace=True),
-
-            # project
             nn.Conv2d(mid_ch, out_ch, 1, bias=False),
-            nn.GroupNorm(groups, out_ch)
+            nn.GroupNorm(groups, out_ch),
         )
 
     def forward(self, x):
         return self.block(x)
+    
+class SEBlock(nn.Module):
+    """Channel attention (Squeeze-and-Excite)."""
+    def __init__(self, channels, reduction=8):
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(channels, channels // reduction, 1),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        w = self.pool(x)
+        w = self.fc(w)
+        return x * w
+
+# ===========================
+# CBAM Lite Gate
+# ===========================
+
+class CBAMGate(nn.Module):
+    """
+    CBAM-lite skip gate.
+    Acts as a conditional gate: refines skip connection features
+    using decoder context.
+    """
+    def __init__(self, skip_ch, decoder_ch, reduction=8):
+        super().__init__()
+
+        # Project skip and decoder to same inter channels
+        inter_ch = skip_ch // 2
+        self.skip_proj = nn.Conv2d(skip_ch, inter_ch, 1, bias=False)
+        self.dec_proj = nn.Conv2d(decoder_ch, inter_ch, 1, bias=False)
+
+        # Channel attention (SE)
+        self.channel_attn = SEBlock(inter_ch, reduction=reduction)
+
+        # Spatial attention
+        self.spatial_attn = nn.Sequential(
+            nn.Conv2d(1, 1, kernel_size=3, padding=1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, skip, decoder):
+        # Project features
+        skip_p = self.skip_proj(skip)
+        dec_p = self.dec_proj(decoder)
+
+        # Combine skip + decoder
+        combined = nn.ReLU()(skip_p + dec_p)
+
+        # Channel attention
+        ca = self.channel_attn(combined)
+        combined = combined * ca
+
+        # Spatial attention
+        sa_map = combined.mean(dim=1, keepdim=True)
+        sa_map = self.spatial_attn(sa_map)
+
+        skip_refined = skip * sa_map
+
+        return skip_refined
+
+# ===========================
+# ASPP Context Module
+# ===========================
+    
+class ASPP(nn.Module):
+
+    def __init__(self, in_ch, out_ch, rates=(2,4,6)):
+        super().__init__()
+
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 1, bias=False),
+            nn.GroupNorm(8, out_ch),
+            nn.SiLU(inplace=True)
+        )
+
+        self.branch2 = MBConvBlock(in_ch, out_ch, groups=8, dilation=rates[0])
+        self.branch3 = MBConvBlock(in_ch, out_ch, groups=8, dilation=rates[1])
+        self.branch4 = MBConvBlock(in_ch, out_ch, groups=8, dilation=rates[2])
+
+        self.pool = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_ch, out_ch, 1, bias=False),
+            nn.GroupNorm(8, out_ch),
+            nn.SiLU(inplace=True)
+        )
+
+        concat_ch = out_ch * 5
+
+        self.project = nn.Sequential(
+            nn.Conv2d(concat_ch, in_ch, 1, bias=False),
+            nn.GroupNorm(8, in_ch),
+            nn.SiLU(inplace=True)
+        )
+
+    def forward(self, x):
+
+        h, w = x.shape[2:]
+
+        p1 = self.branch1(x)
+        p2 = self.branch2(x)
+        p3 = self.branch3(x)
+        p4 = self.branch4(x)
+
+        p5 = self.pool(x)
+        p5 = torch.nn.functional.interpolate(
+            p5, size=(h, w), mode="bilinear", align_corners=False
+        )
+
+        x = torch.cat([p1,p2,p3,p4,p5], dim=1)
+
+        return self.project(x)
 
 class Up(nn.Module):
     '''An upsampling block that uses bilinear upsampling,
@@ -84,7 +181,7 @@ class Up(nn.Module):
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         self.reduce = nn.Conv2d(in_ch, in_ch // 2, kernel_size=1, bias=False)
         self.conv = ConvBlock(in_ch // 2 + skip_ch, out_ch)
-        self.gate = GatedSkip(skip_ch, in_ch // 2, inter_ch=skip_ch // 2)
+        self.gate = CBAMGate(skip_ch, in_ch // 2) 
 
     def forward(self, x, skip):
         x = self.up(x)
@@ -138,99 +235,3 @@ class UNet(nn.Module):
         if x.shape[2:] != input_size:
             x = x[:, :, :input_size[0], :input_size[1]]
         return x
-    
-class ASPP(nn.Module):
-
-    def __init__(self, in_ch, out_ch, rates=(2,4,6)):
-        super().__init__()
-
-        self.branch1 = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 1, bias=False),
-            nn.GroupNorm(8, out_ch),
-            nn.SiLU(inplace=True)
-        )
-
-        self.branch2 = MBConvBlock(in_ch, out_ch, groups=8, dilation=rates[0])
-        self.branch3 = MBConvBlock(in_ch, out_ch, groups=8, dilation=rates[1])
-        self.branch4 = MBConvBlock(in_ch, out_ch, groups=8, dilation=rates[2])
-
-        self.pool = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_ch, out_ch, 1, bias=False),
-            nn.GroupNorm(8, out_ch),
-            nn.SiLU(inplace=True)
-        )
-
-        concat_ch = out_ch * 5
-
-        self.se = SEBlock(concat_ch)
-
-        self.project = nn.Sequential(
-            nn.Conv2d(concat_ch, in_ch, 1, bias=False),
-            nn.GroupNorm(8, in_ch),
-            nn.SiLU(inplace=True)
-        )
-
-    def forward(self, x):
-
-        h, w = x.shape[2:]
-
-        p1 = self.branch1(x)
-        p2 = self.branch2(x)
-        p3 = self.branch3(x)
-        p4 = self.branch4(x)
-
-        p5 = self.pool(x)
-        p5 = torch.nn.functional.interpolate(
-            p5, size=(h, w), mode="bilinear", align_corners=False
-        )
-
-        x = torch.cat([p1,p2,p3,p4,p5], dim=1)
-
-        x = self.se(x)
-
-        return self.project(x)
-
-class SEBlock(nn.Module):
-
-    def __init__(self, channels, reduction=16):
-        super().__init__()
-
-        self.pool = nn.AdaptiveAvgPool2d(1)
-
-        self.fc = nn.Sequential(
-            nn.Conv2d(channels, channels // reduction, 1),
-            nn.SiLU(inplace=True),
-            nn.Conv2d(channels // reduction, channels, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-
-        w = self.pool(x)
-        w = self.fc(w)
-
-        return x * w
-
-class GatedSkip(nn.Module):
-
-    def __init__(self, skip_ch, decoder_ch, inter_ch):
-        super().__init__()
-
-        self.skip_proj = nn.Conv2d(skip_ch, inter_ch, 1, bias=False)
-        self.dec_proj  = nn.Conv2d(decoder_ch, inter_ch, 1, bias=False)
-
-        self.psi = nn.Sequential(
-            nn.Conv2d(inter_ch, 1, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, skip, decoder):
-
-        g1 = self.skip_proj(skip)
-        g2 = self.dec_proj(decoder)
-
-        gate = nn.ReLU()(g1 + g2)
-        gate = self.psi(gate)
-
-        return skip * gate
