@@ -14,6 +14,22 @@ return_nodes = {
     }
 encoder = feature_extraction.create_feature_extractor(backbone, return_nodes=return_nodes)
 
+class ConvBlock(nn.Module):
+    '''A simple convolutional block with two Conv2d layers, each followed by GroupNorm and SiLU activation.'''
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.GroupNorm(8, out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.GroupNorm(8, out_ch),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
 class MBConvBlock(nn.Module):
     '''
     Mobile inverted bottleneck block.
@@ -67,7 +83,7 @@ class Up(nn.Module):
         super().__init__()
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         self.reduce = nn.Conv2d(in_ch, in_ch // 2, kernel_size=1, bias=False)
-        self.conv = MBConvBlock(in_ch // 2 + skip_ch, out_ch)
+        self.conv = ConvBlock(in_ch // 2 + skip_ch, out_ch)
 
     def forward(self, x, skip):
         x = self.up(x)
@@ -95,7 +111,7 @@ class UNet(nn.Module):
 
         self.head = nn.Conv2d(64, num_classes, 1)
         self.logits_up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.context = ASPP(1280, 1280)  # Context module at the bottleneck
+        self.context = ASPP(1280, 256)  # Context module at the bottleneck
 
     def forward(self, x):
         input_size = x.shape[2:]
@@ -107,9 +123,9 @@ class UNet(nn.Module):
         s4 = features['skip4']
         b = features['bottleneck']
 
-        context = self.context(b)
+        b = self.context(b)
 
-        x = self.up1(context, s4)
+        x = self.up1(b, s4)
         x = self.up2(x, s3)
         x = self.up3(x, s2)
         x = self.up4(x, s1)
@@ -139,6 +155,7 @@ class ASPP(nn.Module):
         self.pool = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(in_ch, out_ch, 1, bias=False),
+            nn.GroupNorm(8, out_ch),
             nn.SiLU(inplace=True)
         )
 
