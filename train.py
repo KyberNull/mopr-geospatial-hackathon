@@ -14,7 +14,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from tqdm import tqdm
-from transforms import TrainTransforms, EvalTransforms
+from transforms import TrainTransform, EvalTransform
 
 config = get_train_config()
 LEARNING_RATE = config.learning_rate
@@ -122,9 +122,9 @@ def main(device, model_path):
     val_img_dir = "data/geospatial_data/CH2/processed_datasets"
     val_mask_dir = "data/geospatial_data/CH2/processed_masks"
 
-    trainDataset = geospatial_dataset(img_dir=train_img_dir, img_mask=train_mask_dir, transform=TrainTransforms())
+    trainDataset = geospatial_dataset(img_dir=train_img_dir, img_mask=train_mask_dir, transform=TrainTransform())
     trainLoader = DataLoader(dataset=trainDataset, batch_size=NUM_BATCHES, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, persistent_workers=NUM_WORKERS > 0)
-    vailidationDataset = geospatial_dataset(img_dir=val_img_dir, img_mask=val_mask_dir, transform=EvalTransforms())
+    vailidationDataset = geospatial_dataset(img_dir=val_img_dir, img_mask=val_mask_dir, transform=EvalTransform())
     validationLoader = DataLoader(dataset=vailidationDataset, batch_size=NUM_BATCHES, shuffle=False, num_workers=NUM_WORKERS, pin_memory=pin_memory)
 
     model = UNet(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)

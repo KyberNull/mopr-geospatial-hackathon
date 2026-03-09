@@ -1,7 +1,7 @@
 """Custom geospatial_dataset class"""
 
 from torch.utils.data import Dataset
-from transforms import TrainTransforms
+from transforms import TrainTransform
 import torch
 from PIL import Image
 from torchvision import tv_tensors

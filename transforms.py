@@ -4,9 +4,32 @@ from albumentations.pytorch import ToTensorV2
 
 SIZE = (384,384)
 
+
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
 TrainTransform = A.Compose([
-    
+    A.Resize(SIZE[0], SIZE[1]),
+    A.HorizontalFlip(p=0.3),
+    A.VerticalFlip(p=0.3),
+    A.Rotate(30),
+
+
+    A.Normalize(mean = IMAGENET_MEAN, std = IMAGENET_STD),
+
+    A.CoarseDropout(),
+
+    A.ColorJitter(brightness=0.8)
 ])
+
+
+EvalTransform = A.Compose([
+    A.Resize(SIZE[0], SIZE[1]),
+    A.HorizontalFlip(p = 0.5),
+    A.Normalize(mean = IMAGENET_MEAN, std = IMAGENET_STD)
+])
+
 
 
 """import torch
