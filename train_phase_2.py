@@ -226,14 +226,14 @@ def get_dataloaders():
 		root='./data/phase-2',
 		split = 'train',
 		scene=['rural', 'urban'],
-		transforms=TrainTransforms(),
+		transforms=TrainTransforms(), #type: ignore
 		download=True,
 		)
 	val_dataset = LoveDA(
 		root='./data/phase-2',
 		split = 'test',
 		scene=['rural', 'urban'],
-		transforms=EvalTransforms(),
+		transforms=EvalTransforms(), #type: ignore
 		download=True,
 		)
 	train_dataloader = DataLoader(

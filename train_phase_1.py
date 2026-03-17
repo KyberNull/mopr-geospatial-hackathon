@@ -142,14 +142,14 @@ def get_dataloaders():
 		root='./data/phase-1',
 		image_set='train_noval',
 		mode='boundaries',
-		download=False,
+		download=True,
 		transforms=TrainTransforms()
 	)
 	val_dataset = datasets.SBDataset(
 		root='./data/phase-1',
 		image_set='train',
 		mode='boundaries',
-		download=False,
+		download=True,
 		transforms=EvalTransforms()
 	)
 	train_dataloader = DataLoader(
