@@ -245,7 +245,7 @@ def main(device, model_path):
 
 		should_save = (epoch + 1) % CHECKPOINT_INTERVAL == 0 or (epoch + 1) == NUM_EPOCHS
 		if should_save:
-			saved = save_checkpoint(
+			save_checkpoint(
 				model=model,
 				optimizer=optimizer,
 				scheduler=scheduler,
