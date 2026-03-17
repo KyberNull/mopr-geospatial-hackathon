@@ -142,20 +142,20 @@ def get_dataloaders():
 		root='./data/phase-1',
 		image_set='train_noval',
 		mode='boundaries',
-		download=False,
+		download=True,
 		transforms=TrainTransforms()
 	)
 	val_dataset = datasets.SBDataset(
 		root='./data/phase-1',
 		image_set='train',
 		mode='boundaries',
-		download=False,
+		download=True,
 		transforms=EvalTransforms()
 	)
 	train_dataloader = DataLoader(
 		dataset=train_dataset,
 		batch_size=NUM_BATCHES,
-		shuffle=False,
+		shuffle=True,
 		num_workers=NUM_WORKERS,
 		pin_memory=pin_memory,
 		persistent_workers=NUM_WORKERS > 0
