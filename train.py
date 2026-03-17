@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets
 from tqdm import tqdm
 from transforms import TrainTransforms, EvalTransforms
-from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
+from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging, freeze_encoder
 
 
 ###-------CONSTANTS-------###
@@ -72,7 +72,7 @@ def validate(model, validation_loader, device, criterion):
         logging.info(f"mIoU: {total_iou:.4f}")
 
         model.train()
-        freeze_encoder(model)
+        freeze_encoder(model, LEARNING_RATE/10)
 
 def load_checkpoint(model_path, model, optimizer, scheduler, scaler):
     start_epoch = 0
@@ -106,7 +106,7 @@ def main(device, model_path):
     validationLoader = load_dataloader(image_set='val', transforms=EvalTransforms(), shuffle=False)
 
     model = UNet(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
-    freeze_encoder(model)
+    freeze_encoder(model, LEARNING_RATE/10)
 
     optimizer = optim.AdamW(get_adamw_param_groups(model, LEARNING_RATE, LEARNING_RATE/10, WEIGHT_DECAY), lr=LEARNING_RATE)
     model = torch.compile(model)
@@ -128,7 +128,7 @@ def main(device, model_path):
     model, optimizer, scheduler, scaler, start_epoch = load_checkpoint(model_path, model, optimizer, scheduler, scaler)
 
     model.train()
-    freeze_encoder(model)
+    freeze_encoder(model, LEARNING_RATE/10)
     for epoch in range(start_epoch, NUM_EPOCHS):
         epoch_bar = tqdm(trainLoader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", leave=True, disable=not sys.stdout.isatty(), position=0)
         running_loss = 0.0
