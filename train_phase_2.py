@@ -1,11 +1,10 @@
 """
-Training loop for the GeoSpatial dataset.
+Pretraining loop for segmentation on the GeoSpatial dataset.
 
 This script is intentionally similar to train.py, but uses SBD for source-task
 pretraining so train.py can be reserved for downstream/domain training.
 """
 
-from datasets import geospatial_dataset
 import logging
 from losses import dice_loss, compute_means
 from model import UNet
@@ -16,25 +15,26 @@ import torch
 from torch import nn, optim, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
+from torchgeo.datasets import LoveDA
 from tqdm import tqdm
 from train_phase_1 import NUM_EPOCHS_PHASE_1
-from train_phase_2 import NUM_EPOCHS_PHASE_2
 from transforms import TrainTransforms, EvalTransforms
-from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging, freeze_encoder
+from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 0.001
-BACKBONE_FACTOR = 10
+LEARNING_RATE = 1e-3
+BACKBONE_FACTOR = 20
 BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
 WEIGHT_DECAY = 0.001
 WARMUP_EPOCHS = 5
 MODEL_PATH = "model.pt"
-NUM_BATCHES = 2
-NUM_CLASSES = 4
-NUM_EPOCHS_PHASE_3 = 80
+NUM_BATCHES = 8
+NUM_CLASSES = 6
+NUM_EPOCHS_PHASE_2 = 50
+NUM_EPOCHS = NUM_EPOCHS_PHASE_2 + NUM_EPOCHS_PHASE_1
 NUM_WORKERS = min(4, os.cpu_count() or 1)
 VAL_INTERVAL = 1
-NUM_VAL_SAMPLES = 280
+NUM_VAL_SAMPLES = 150
 CHECKPOINT_RAM_HEADROOM_GB = 0.1
 ###-----------------------###
 
@@ -52,7 +52,7 @@ def handle_shutdown(sig, frame):
 def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion):
 	epoch_bar = tqdm(
 		train_loader,
-		desc=f"Pretrain Epoch {epoch + 1}/{NUM_EPOCHS_PHASE_3}",
+		desc=f"Phase 2 Epoch {epoch + 1}/{NUM_EPOCHS}",
 		leave=True,
 		disable=not sys.stdout.isatty(),
 		position=0,
@@ -87,7 +87,7 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criter
 		avg_loss = running_loss / (batch + 1)
 		epoch_bar.set_postfix(loss=avg_loss, lr=scheduler.get_last_lr()[0])
 
-def validate(model, validation_loader, device, criterion, epoch):
+def validate(model, validation_loader, device, criterion):
 	model.eval()
 	running_val_loss = 0.0
 	total_iou = 0.0
@@ -104,9 +104,9 @@ def validate(model, validation_loader, device, criterion, epoch):
 			val_input = val_input.to(device, non_blocking=True)
 			val_output = val_output.squeeze(1).to(device, non_blocking=True).long()
 
-			with autocast(device_type=device.type, dtype=amp_dtype):
-				val_prediction = model(val_input)
-				val_loss = criterion(val_prediction, val_output)
+			val_prediction = model(val_input)
+
+			val_loss = criterion(val_prediction.float(), val_output)
 
 			running_val_loss += val_loss.item()
 
@@ -120,10 +120,10 @@ def validate(model, validation_loader, device, criterion, epoch):
 		logger.info(f"mIoU: {total_iou:.4f}")
 
 	model.train()
-	freeze_encoder(model)
+
 
 def load_checkpoint(model_path, model):
-	start_epoch = NUM_EPOCHS_PHASE_1 + NUM_EPOCHS_PHASE_2
+	start_epoch = NUM_EPOCHS_PHASE_1
 	train_loader, validation_loader = get_dataloaders()
 	optimizer = optim.AdamW(get_adamw_param_groups(model, LEARNING_RATE, BACKBONE_LEARNING_RATE, WEIGHT_DECAY), lr=LEARNING_RATE)
 	scheduler = setup_scheduler(train_loader, optimizer)
@@ -207,7 +207,7 @@ def load_checkpoint(model_path, model):
 					logger.warning("Continuing with freshly initialized optimizer.")
 			start_epoch = ckpt.get("epoch", -1) + 1
 			
-			if start_epoch != 20:
+			if start_epoch <= NUM_EPOCHS_PHASE_1:
 				optimizer.load_state_dict(ckpt["optim_state"])
 				scheduler.load_state_dict(ckpt["scheduler_state"])
 				scaler.load_state_dict(ckpt["scaler_state"])
@@ -222,21 +222,19 @@ def load_checkpoint(model_path, model):
 	return model, optimizer, scheduler, scaler, start_epoch, train_loader, validation_loader
 
 def get_dataloaders():
-	#Importing the trainning and validation villages
-	train_img_dir = "data/phase-3/TrainningDataset/processed_datasets"
-	train_mask_dir = "data/phase-3/TrainningDataset/processed_masks"
-	val_img_dir = "data/phase-3/ValidationDataset/processed_datasets"
-	val_mask_dir = "data/phase-3/ValidationDataset/processed_masks"
-
-	train_dataset = geospatial_dataset(
-		img_dir=train_img_dir,
-		img_mask=train_mask_dir,
-		transform=TrainTransforms()
+	train_dataset = LoveDA(
+		root='./data/phase-2',
+		split = 'train',
+		scene=['rural', 'urban'],
+		transforms=TrainTransforms(),
+		download=True,
 		)
-	val_dataset = geospatial_dataset(
-		img_dir=val_img_dir,
-		img_mask=val_mask_dir,
-		transform=EvalTransforms()
+	val_dataset = LoveDA(
+		root='./data/phase-2',
+		split = 'test',
+		scene=['rural', 'urban'],
+		transforms=EvalTransforms(),
+		download=True,
 		)
 	train_dataloader = DataLoader(
 		dataset=train_dataset,
@@ -244,24 +242,24 @@ def get_dataloaders():
 		shuffle=True,
 		num_workers=NUM_WORKERS,
 		pin_memory=pin_memory,
-		persistent_workers=NUM_WORKERS > 0
+		persistent_workers=NUM_WORKERS > 0,
 		)
 	val_dataloader = DataLoader(
 		dataset=val_dataset,
 		batch_size=NUM_BATCHES,
 		shuffle=False,
 		num_workers=NUM_WORKERS,
-		pin_memory=pin_memory
+		pin_memory=pin_memory,
 		)
 	return train_dataloader, val_dataloader
 
 def setup_scheduler(train_loader, optimizer):
 	warmup_steps = min(
 		max(0, WARMUP_EPOCHS * len(train_loader)),
-		max(0, NUM_EPOCHS_PHASE_3 * len(train_loader) - 1),
+		max(0, NUM_EPOCHS * len(train_loader) - 1),
 	)
 
-	scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS_PHASE_3 * len(train_loader) - warmup_steps, eta_min=LEARNING_RATE * 0.1)
+	scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS * len(train_loader) - warmup_steps, eta_min=LEARNING_RATE * 0.1)
 
 	if warmup_steps > 0:
 		warmup_scheduler = LinearLR(
@@ -280,22 +278,17 @@ def setup_scheduler(train_loader, optimizer):
 def main(device, model_path):
 	model = UNet(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
 
-	freeze_encoder(model)
-
-	model = torch.compile(model)
-
 	model, optimizer, scheduler, scaler, start_epoch, train_loader, validation_loader = load_checkpoint(model_path, model)
-
+	model = torch.compile(model)
 	criterion = nn.CrossEntropyLoss()
 
 	model.train()
-	freeze_encoder(model)
 
-	for epoch in range(start_epoch, NUM_EPOCHS_PHASE_3):
+	for epoch in range(start_epoch, NUM_EPOCHS):
 		train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion)
 
 		if (epoch + 1) % VAL_INTERVAL == 0:
-			validate(model, validation_loader, device, criterion, epoch)
+			validate(model, validation_loader, device, criterion)
 
 		save_checkpoint(model, optimizer, scheduler, scaler, epoch, MODEL_PATH)
 
@@ -310,3 +303,5 @@ if __name__ == "__main__":
     setup_logging()
 
     main(device, MODEL_PATH)
+
+

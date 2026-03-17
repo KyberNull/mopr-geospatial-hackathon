@@ -4,30 +4,53 @@ import torch
 from torch import nn
 
 
-# FIXME: Implement it properly
-def freeze_encoder(model, encoder_lr):
-    """Freeze encoder weights and normalisation weights except the last two blocks for transfer learning."""
+def freeze_encoder(model):
+    """
+    Prepares an encoder-decoder model for transfer learning.
+    Takes exactly one parameter: the model itself.
+    """
     
-    encoder = getattr(model, "encoder", None)
+    encoder = getattr(model, "encoder", getattr(getattr(model, "_orig_mod", None), "encoder", None))
+    decoder = getattr(model, "decoder", getattr(getattr(model, "_orig_mod", None), "decoder", None))
+
     if encoder is None:
-        encoder = getattr(getattr(model, "_orig_mod", None), "encoder", None)
-    if encoder is None:
+        print("Warning: No 'encoder' attribute found in the model.")
         return
-    
+
+    # 2. Freeze the entire encoder and set to eval mode (locks BatchNorm stats)
     for p in encoder.parameters():
         p.requires_grad = False
     encoder.eval()
 
-    # EfficientNetV2-S encoder blocks are under encoder.features.<idx>; keep the last two trainable.
+    # 3. Target and unfreeze the last two blocks of the encoder
+    if hasattr(encoder, "features"):
+        trainable_stage_ids = sorted(
+            {
+                int(name.split(".")[1])
+                for name, _ in encoder.named_parameters()
+                if name.startswith("features.") and len(name.split(".")) > 2 and name.split(".")[1].isdigit()
+            }
+        )[-2:]
 
-    for i in range(2):
-        block = encoder.features[len(encoder.features) - 1 - i]
-        block.eval() 
+        # Unfreeze parameters in the last two blocks
+        for name, p in encoder.named_parameters():
+            if any(name.startswith(f"features.{idx}.") for idx in trainable_stage_ids):
+                p.requires_grad = True
+                
+        # Set ONLY those specific encoder blocks back to train mode
+        for idx in trainable_stage_ids:
+            block = getattr(encoder.features, str(idx), None)
+            if block is not None:
+                block.train()
 
-        for name, m in block.named_modules():
-            if not isinstance(m, (nn.GroupNorm)):
-                for p in m.parameters():
-                    p.requires_grad = True
+    # 4. Ensure the decoder is completely unfrozen and in train mode
+    if decoder is not None:
+        for p in decoder.parameters():
+            p.requires_grad = True
+        decoder.train()
+        print("Model configured: Encoder partially frozen, Decoder fully trainable.")
+    else:
+        print("Warning: No 'decoder' attribute found, but encoder was configured.")
 
 def setup_logging():
     logging.basicConfig(

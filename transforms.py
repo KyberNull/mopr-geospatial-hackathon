@@ -1,6 +1,7 @@
 """Data Augmentation and preprocessing transforms for Segmentation."""
 
 import torch
+from torchvision import tv_tensors
 from torchvision.transforms import v2
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as F
@@ -16,7 +17,15 @@ class EvalTransforms:
     def __init__(self, size=(384, 384)):
         self.size = size
 
-    def __call__(self, image: torch.Tensor, mask: torch.Tensor):
+    def __call__(self, image, mask=None):
+        if mask is None:
+            if isinstance(image, dict):
+                sample = image
+                image, mask = sample['image'], sample['mask']
+            else:
+                raise TypeError("Invalid arguments")
+        image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
+
         image = F.resize(image, self.size, interpolation=InterpolationMode.BILINEAR, antialias=True)
         mask = F.resize(mask, self.size, interpolation=InterpolationMode.NEAREST)
 
@@ -45,7 +54,14 @@ class TrainTransforms:
         self.random_resized_crop = v2.RandomResizedCrop(size=self.size, scale=self.scale, ratio=self.ratio)
         self.colorjitter = v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05,)
 
-    def __call__(self, image: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(self, image, mask=None) -> tuple[torch.Tensor, torch.Tensor]:
+        if mask is None:
+            if isinstance(image, dict):
+                sample = image
+                image, mask = sample['image'], sample['mask']
+            else:
+                raise TypeError("Invalid arguments")
+        image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
 
         image, mask = self.flips(image, mask)
         image, mask = self.random_resized_crop(image, mask)
