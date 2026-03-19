@@ -57,3 +57,15 @@ def compute_means(pred: torch.Tensor, target: torch.Tensor, num_classes: int, sm
     iou = (iou * class_present).sum(dim=1) / class_present.sum(dim=1).clamp_min(1)
 
     return dice.mean(), iou.mean()
+
+def CBCE(pred_logits: torch.Tensor, target: torch.Tensor, num_classes: int, smooth = 1e-8):
+
+    class_pixels = target.sum(dim=(0, 2, 3))
+    background_pixels = (1 - target).sum(dim=(0, 2, 3))
+
+    pos_weight=((background_pixels + smooth) / (class_pixels + smooth))
+    pos_weight = pos_weight.view(-1, 1, 1).to(pred_logits.device)
+
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    return criterion(pred_logits, target)
