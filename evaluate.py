@@ -1,25 +1,25 @@
 """Evaluation and qualitative visualization utilities for model predictions."""
 
-from config import get_eval_config
 import logging
+import os
 from losses import compute_means
 import matplotlib.pyplot as plt
 from model import UNet
 import numpy
 from rich.logging import RichHandler
 import torch
-from torchvision import datasets
+from torch import nn
 from torch.utils.data import DataLoader
+from torchvision import datasets
 from tqdm import tqdm
 from transforms import EvalTransforms, IMAGENET_MEAN, IMAGENET_STD
 
-config = get_eval_config()
-MODEL_PATH = config.model_path
-NUM_WORKERS = config.num_workers
-NUM_BATCHES = config.num_batches
-NUM_CLASSES = config.num_classes
-MAX_EXAMPLES = config.max_examples
-IGNORE_LABEL = config.ignore_label
+MODEL_PATH = "model.pt"
+NUM_WORKERS = min(4, os.cpu_count() or 1)
+NUM_BATCHES = 16
+NUM_CLASSES = 21
+MAX_EXAMPLES = 10
+IGNORE_LABEL = 255
 
 pin_memory = False
 results_to_view = []
@@ -30,6 +30,7 @@ def test_model():
     testData = datasets.VOCSegmentation('./data', year = '2012', image_set = 'val', transforms = EvalTransforms())
     testLoader = DataLoader(dataset=testData, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, batch_size=NUM_BATCHES, persistent_workers=NUM_WORKERS > 0)
 
+    criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_LABEL)
 
     model = UNet(NUM_CLASSES).to(device=device, non_blocking=True)
     model = torch.compile(model=model)
@@ -47,7 +48,7 @@ def test_model():
 
     model.eval()
     count = 0
-    total_DC = 0
+    total_CEL = 0
     total_iou = 0
 
     testing_bar = tqdm(testLoader, desc = "Evaluating Model", leave=True)
@@ -69,16 +70,16 @@ def test_model():
                 results_to_view.append({"image":test_input_img, 
                                         "pred_mask": pred_mask, 
                                         "true_mask": true_mask})
-
-            dice_coefficient, iou = compute_means(preds, target, NUM_CLASSES)
-            total_DC += dice_coefficient
-            total_iou += iou
+            val_loss = criterion(preds, target)
+            _, iou = compute_means(preds, target, NUM_CLASSES)
+            total_CEL += val_loss.item()
+            total_iou += iou.item()
             count += 1
 
-    total_DC /= count
+    total_CEL /= count
     total_iou /= count
 
-    logger.info(f"mDC: {total_DC:.4f}")
+    logger.info(f"mCEL: {total_CEL:.4f}")
     logger.info(f"mIoU: {total_iou:.4f}")
 
 
