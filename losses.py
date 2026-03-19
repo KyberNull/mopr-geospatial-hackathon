@@ -53,8 +53,7 @@ def compute_means(pred: torch.Tensor, target: torch.Tensor, num_classes: int, sm
     iou = (true_positive + smooth) / (union + smooth)
 
     class_present = (pred_sum + target_sum) > 0
-    if not class_present.any():
-        zero = pred.new_tensor(0.0)
-        return zero, zero
+    dice = (dice * class_present).sum(dim=1) / class_present.sum(dim=1).clamp_min(1)
+    iou = (iou * class_present).sum(dim=1) / class_present.sum(dim=1).clamp_min(1)
 
-    return dice[class_present].mean(), iou[class_present].mean()
+    return dice.mean(), iou.mean()
