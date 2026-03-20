@@ -22,7 +22,7 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 3e-4
 BACKBONE_FACTOR = 20
 BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
 WEIGHT_DECAY = 0.001
@@ -73,6 +73,11 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criter
 			loss = criterion(prediction, output_tensor)
 			loss += dice_loss(prediction, output_tensor, NUM_CLASSES)
 
+		if not torch.isfinite(loss):
+			logger.warning(f"Non-finite loss at epoch {epoch+1}, batch {batch}; skipping step.")
+			optimizer.zero_grad(set_to_none=True)
+			continue
+
 		scaler.scale(loss).backward()
 		scale_before_step = scaler.get_scale()
 		scaler.step(optimizer)
@@ -119,7 +124,6 @@ def validate(model, validation_loader, device, criterion):
 		logger.info(f"mIoU: {total_iou:.4f}")
 
 	model.train()
-
 
 def load_checkpoint(model_path, model):
 	start_epoch = NUM_EPOCHS_PHASE_1
@@ -205,7 +209,7 @@ def get_dataloaders():
 	train_dataloader = DataLoader(
 		dataset=train_dataset,
 		batch_size=NUM_BATCHES,
-		shuffle=False,
+		shuffle=True,
 		num_workers=NUM_WORKERS,
 		pin_memory=pin_memory,
 		persistent_workers=NUM_WORKERS > 0,
@@ -247,7 +251,6 @@ def main(device, model_path):
 	criterion = nn.CrossEntropyLoss(ignore_index=255)
 
 	model.train()
-
 	for epoch in range(start_epoch, NUM_EPOCHS):
 		train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion)
 

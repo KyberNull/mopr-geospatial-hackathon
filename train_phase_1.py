@@ -69,6 +69,11 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler):
 			prediction = model(input_tensor)
 			loss = focal_loss(prediction, output_tensor, NUM_CLASSES)
 
+		if not torch.isfinite(loss):
+			logger.warning(f"Non-finite loss at epoch {epoch+1}, batch {batch}; skipping step.")
+			optimizer.zero_grad(set_to_none=True)
+			continue
+
 		scaler.scale(loss).backward()
 		scale_before_step = scaler.get_scale()
 		scaler.step(optimizer)
