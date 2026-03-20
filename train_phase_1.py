@@ -6,7 +6,7 @@ pretraining so train.py can be reserved for downstream/domain training.
 """
 
 import logging
-from losses import CBCE
+from losses import focal_loss
 from model import UNet
 import os
 import signal
@@ -61,13 +61,13 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler):
 			return
 
 		input_tensor = input_tensor.to(device, non_blocking=True)
-		output_tensor = output_tensor.squeeze(1).to(device, non_blocking=True).float()
+		output_tensor = output_tensor.squeeze(1).to(device, non_blocking=True).long()
 
 		optimizer.zero_grad(set_to_none=True)
 
 		with autocast(device_type=device.type, dtype=amp_dtype):
 			prediction = model(input_tensor)
-			loss = CBCE(prediction, output_tensor, NUM_CLASSES)
+			loss = focal_loss(prediction, output_tensor, NUM_CLASSES)
 
 		scaler.scale(loss).backward()
 		scale_before_step = scaler.get_scale()
@@ -96,17 +96,17 @@ def validate(model, validation_loader, device):
 				val_input, val_output = next(val_iterator)
 
 			val_input = val_input.to(device, non_blocking=True)
-			val_output = val_output.squeeze(1).to(device, non_blocking=True).float()
+			val_output = val_output.squeeze(1).to(device, non_blocking=True).long()
 
 			val_prediction = model(val_input)
 
-			val_loss = CBCE(val_prediction, val_output, NUM_CLASSES)
+			val_loss = focal_loss(val_prediction, val_output, NUM_CLASSES)
 
 			running_val_loss += val_loss.item()
 
 		running_val_loss /= NUM_VAL_SAMPLES
 
-		logger.info(f"mCBCE: {running_val_loss:.4f}")
+		logger.info(f"Focal Loss: {running_val_loss:.4f}")
 
 	model.train()
 	freeze_encoder(model)
