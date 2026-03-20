@@ -7,7 +7,7 @@
 - Optimize the model for efficient processing and deployment.
 
 ## Project Structure
-- `train_phase_1.py`: Phase 1 pretraining on SBD boundaries (`NUM_CLASSES=20`).
+- `train_phase_1.py`: Phase 1 pretraining on SBD segmentation (`NUM_CLASSES=21`).
 - `train_phase_2.py`: Phase 2 pretraining on LoveDA (`NUM_CLASSES=7`).
 - `train.py`: Phase 3 fine-tuning on the geospatial target dataset (`NUM_CLASSES=4`).
 - `evaluate.py`: Evaluation/visualization utility (VOC-style validation).
@@ -34,7 +34,7 @@ Equivalent VS Code tasks are also available: `Pretrain`, `Train`, and `Evaluate`
 
 ## Checkpoint and Resume Semantics
 - All phases read/write `model.pt`.
-- On class-count mismatch (for example 20->7 or 7->4), segmentation head weights are dropped and training state is reset for a clean phase transition.
+- On class-count mismatch (for example 21->7 or 7->4), segmentation head weights are dropped and training state is reset for a clean phase transition.
 - Optimizer/scheduler/scaler states are resumed only for true in-phase continuation.
 - This prevents mixed optimizer/scheduler state and unintended LR carry-over across phases.
 

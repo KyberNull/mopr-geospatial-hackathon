@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 def test_model():
         
     testData = datasets.VOCSegmentation('./data', year = '2012', image_set = 'val', transforms = EvalTransforms())
-    testLoader = DataLoader(dataset=testData, shuffle=True, num_workers=NUM_WORKERS, pin_memory=pin_memory, batch_size=NUM_BATCHES, persistent_workers=NUM_WORKERS > 0)
+    testLoader = DataLoader(dataset=testData, shuffle=True, pin_memory=pin_memory)
 
     criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_LABEL)
 
