@@ -25,7 +25,7 @@ LEARNING_RATE = 0.001
 WEIGHT_DECAY = 0.001
 WARMUP_EPOCHS = 5
 MODEL_PATH = "model.pt"
-NUM_BATCHES = 8
+NUM_BATCHES = 16
 NUM_CLASSES = 21
 NUM_EPOCHS_PHASE_1 = 20
 NUM_EPOCHS = NUM_EPOCHS_PHASE_1
@@ -48,7 +48,7 @@ def handle_shutdown(sig, frame):
 def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion):
 	epoch_bar = tqdm(
 		train_loader,
-		desc=f"Phase 1 Epoch {epoch + 1}/{NUM_EPOCHS}",
+		desc=f"[Phase 1] Epoch {epoch + 1}/{NUM_EPOCHS}",
 		leave=True,
 		disable=not sys.stdout.isatty(),
 		position=0,
@@ -125,7 +125,7 @@ def validate(model, validation_loader, device, criterion):
 def load_checkpoint(model_path, model):
 	start_epoch = 0
 	train_loader, validation_loader = get_dataloaders()
-	optimizer = optim.AdamW(get_adamw_param_groups(model, learning_rate=LEARNING_RATE, backbone_lr=0, weight_decay=WEIGHT_DECAY), lr=LEARNING_RATE)
+	optimizer = optim.AdamW(get_adamw_param_groups(model, decoder_lr=LEARNING_RATE, backbone_lr=0, weight_decay=WEIGHT_DECAY), lr=LEARNING_RATE)
 	scheduler = setup_scheduler(train_loader, optimizer)
 	scaler = torch.GradScaler(enabled=(device.type == "cuda")) # GradScaler is only useful on CUDA where float16 gradients can underflow.
 	try:
