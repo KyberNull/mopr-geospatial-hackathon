@@ -23,7 +23,7 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging, freeze_encoder
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 0.001
+LEARNING_RATE = 1e-5
 BACKBONE_FACTOR = 10
 BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
 WEIGHT_DECAY = 0.001
@@ -31,7 +31,7 @@ WARMUP_EPOCHS = 5
 MODEL_PATH = "model.pt"
 NUM_BATCHES = 2
 NUM_CLASSES = 4
-NUM_EPOCHS_PHASE_3 = 80
+NUM_EPOCHS_PHASE_3 = 90
 NUM_WORKERS = min(4, os.cpu_count() or 1)
 VAL_INTERVAL = 1
 NUM_VAL_SAMPLES = 280
@@ -73,6 +73,11 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criter
 			loss = criterion(prediction, output_tensor)
 			loss += dice_loss(prediction, output_tensor, NUM_CLASSES)
 
+		if not torch.isfinite(loss):
+			logger.warning(f"Non-finite loss at epoch {epoch+1}, batch {batch}; skipping step.")
+			optimizer.zero_grad(set_to_none=True)
+			continue
+
 		scaler.scale(loss).backward()
 		scale_before_step = scaler.get_scale()
 		scaler.step(optimizer)
@@ -106,6 +111,10 @@ def validate(model, validation_loader, device, criterion, epoch):
 			with autocast(device_type=device.type, dtype=amp_dtype):
 				val_prediction = model(val_input)
 				val_loss = criterion(val_prediction, val_output)
+
+			if not torch.isfinite(val_loss):
+				non_finite_batches += 1
+				continue
 
 			running_val_loss += val_loss.item()
 
