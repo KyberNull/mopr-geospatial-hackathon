@@ -29,7 +29,7 @@ def dice_loss(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smooth
     dice = (dice * class_present).sum(dim=1) / class_present.sum(dim=1).clamp_min(1)
     return 1 - dice.mean()
 
-def compute_means(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smooth = 1e-8):
+def iou(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smooth = 1e-8):
     target = target.long()
     pred_labels = torch.argmax(pred, dim=1)
     # Ignore VOC's 255 label and compute class stats from a compact confusion matrix.
@@ -49,14 +49,12 @@ def compute_means(pred: torch.Tensor, target: torch.Tensor, num_classes: int, sm
     pred_sum = confusion.sum(dim=0)
     target_sum = confusion.sum(dim=1)
 
-    dice_per_class = (2 * true_positive + smooth) / (pred_sum + target_sum + smooth)
     union = pred_sum + target_sum - true_positive
     iou_per_class = (true_positive + smooth) / (union + smooth)
 
     class_present = (pred_sum + target_sum) > 0
     present_count = class_present.sum().clamp_min(1)
 
-    dice = (dice_per_class * class_present).sum() / present_count
     iou = (iou_per_class * class_present).sum() / present_count
 
-    return dice.mean(), iou.mean()
+    return iou.mean()
