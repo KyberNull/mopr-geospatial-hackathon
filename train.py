@@ -8,12 +8,13 @@ pretraining so train.py can be reserved for downstream/domain training.
 from datasets import geospatial_dataset
 import logging
 from losses import dice_loss, iou_metric
-from model import UNet
+from model import SegFormer
 import os
 import signal
 import sys
 import torch
 from torch import nn, optim, autocast
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -26,8 +27,8 @@ from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_l
 LEARNING_RATE = 1e-4
 BACKBONE_FACTOR = 10
 BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
-WEIGHT_DECAY = 0.001
-WARMUP_EPOCHS = 5
+WEIGHT_DECAY = 0.01
+WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"
 NUM_BATCHES = 16
 NUM_CLASSES = 4
@@ -69,7 +70,10 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criter
 		optimizer.zero_grad(set_to_none=True)
 
 		with autocast(device_type=device.type, dtype=amp_dtype):
-			prediction = model(input_tensor)
+			backends = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
+			with sdpa_kernel(backends=backends, set_priority=True):
+				prediction = model(input_tensor)
+			
 			loss = criterion(prediction, output_tensor)
 			loss += dice_loss(prediction, output_tensor, NUM_CLASSES)
 
@@ -240,7 +244,7 @@ def setup_scheduler(train_loader, optimizer):
 	if warmup_steps > 0:
 		warmup_scheduler = LinearLR(
 			optimizer,
-			start_factor=0.1,
+			start_factor=0.01,
 			end_factor=1.0,
 			total_iters=warmup_steps,
 		)
@@ -252,7 +256,7 @@ def setup_scheduler(train_loader, optimizer):
 	return scheduler
 
 def main(device, model_path):
-	model = UNet(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
+	model = SegFormer(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
 
 	#freeze_encoder(model)
 

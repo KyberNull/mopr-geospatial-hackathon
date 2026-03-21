@@ -7,12 +7,13 @@ pretraining so train.py can be reserved for downstream/domain training.
 
 import logging
 from losses import dice_loss, iou_metric
-from model import UNet
+from model import SegFormer
 import os
 import signal
 import sys
 import torch
 from torch import nn, optim, autocast
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torchvision import datasets
@@ -21,8 +22,8 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging, freeze_encoder
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 0.001
-WEIGHT_DECAY = 0.001
+LEARNING_RATE = 1e-4
+WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 5
 MODEL_PATH = "model.pt"
 NUM_BATCHES = 16
@@ -66,7 +67,9 @@ def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criter
 		optimizer.zero_grad(set_to_none=True)
 
 		with autocast(device_type=device.type, dtype=amp_dtype):
-			prediction = model(input_tensor)
+			backends = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
+			with sdpa_kernel(backends=backends, set_priority=True):
+				prediction = model(input_tensor)
 			loss = criterion(prediction, output_tensor)
 			loss += dice_loss(prediction, output_tensor, NUM_CLASSES)
 
@@ -105,9 +108,12 @@ def validate(model, validation_loader, device, criterion):
 			val_input = val_input.to(device, non_blocking=True)
 			val_output = val_output.squeeze(1).to(device, non_blocking=True).long()
 
-			val_prediction = model(val_input)
+			with autocast(device_type=device.type, dtype=amp_dtype):
+				val_prediction = model(val_input)
+				val_loss = criterion(val_prediction, val_output)
 
-			val_loss = criterion(val_prediction, val_output)
+			if not torch.isfinite(val_loss):
+				continue
 
 			running_val_loss += val_loss.item()
 			iou = iou_metric(val_prediction, val_output, NUM_CLASSES)
@@ -200,7 +206,7 @@ def setup_scheduler(train_loader, optimizer):
 	return scheduler
 
 def main(device, model_path):
-	model = UNet(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
+	model = SegFormer(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
 
 	freeze_encoder(model)
 

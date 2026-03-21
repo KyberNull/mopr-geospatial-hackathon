@@ -64,6 +64,8 @@ def device_setup():
         pin_memory = True
         amp_dtype = torch.float16
         torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     elif torch.mps.is_available():
         device = torch.device('mps')
