@@ -110,7 +110,7 @@ def validate(model, validation_loader, device, criterion):
 			val_loss = criterion(val_prediction, val_output)
 
 			running_val_loss += val_loss.item()
-			_, iou = iou(val_prediction, val_output, NUM_CLASSES)
+			iou = iou(val_prediction, val_output, NUM_CLASSES)
 			total_iou += iou.item()
 
 		running_val_loss /= NUM_VAL_SAMPLES
