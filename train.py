@@ -23,15 +23,15 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging, freeze_encoder
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 1e-4
 BACKBONE_FACTOR = 10
 BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
 WEIGHT_DECAY = 0.001
 WARMUP_EPOCHS = 5
 MODEL_PATH = "model.pt"
-NUM_BATCHES = 2
+NUM_BATCHES = 16
 NUM_CLASSES = 4
-NUM_EPOCHS_PHASE_3 = 90
+NUM_EPOCHS_PHASE_3 = 100
 NUM_WORKERS = min(4, os.cpu_count() or 1)
 VAL_INTERVAL = 1
 NUM_VAL_SAMPLES = 280
@@ -51,7 +51,7 @@ def handle_shutdown(sig, frame):
 def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion):
 	epoch_bar = tqdm(
 		train_loader,
-		desc=f"Pretrain Epoch {epoch + 1}/{NUM_EPOCHS_PHASE_3}",
+		desc=f"[Train] Epoch {epoch + 1}/{NUM_EPOCHS_PHASE_3}",
 		leave=True,
 		disable=not sys.stdout.isatty(),
 		position=0,
@@ -113,7 +113,6 @@ def validate(model, validation_loader, device, criterion, epoch):
 				val_loss = criterion(val_prediction, val_output)
 
 			if not torch.isfinite(val_loss):
-				non_finite_batches += 1
 				continue
 
 			running_val_loss += val_loss.item()
@@ -128,7 +127,7 @@ def validate(model, validation_loader, device, criterion, epoch):
 		logger.info(f"mIoU: {total_iou:.4f}")
 
 	model.train()
-	freeze_encoder(model)
+	#freeze_encoder(model)
 
 def load_checkpoint(model_path, model):
 	start_epoch = NUM_EPOCHS_PHASE_1 + NUM_EPOCHS_PHASE_2
@@ -255,7 +254,7 @@ def setup_scheduler(train_loader, optimizer):
 def main(device, model_path):
 	model = UNet(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
 
-	freeze_encoder(model)
+	#freeze_encoder(model)
 
 	model = torch.compile(model)
 
@@ -264,7 +263,7 @@ def main(device, model_path):
 	criterion = nn.CrossEntropyLoss()
 
 	model.train()
-	freeze_encoder(model)
+	#freeze_encoder(model)
 
 	for epoch in range(start_epoch, NUM_EPOCHS_PHASE_3):
 		train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion)
