@@ -13,11 +13,11 @@ class SegFormer(nn.Module):
     SegFormer architecture using a hierarchical Transformer encoder (MiT) 
      and a lightweight MLP decoder.
     """
-    def __init__(self, num_classes: int, encoder_name: str = "mit_b3"):
+    def __init__(self, num_classes: int, encoder_name: str = "mit_b2"):
         super().__init__()
         
         # We use smp.Segformer which implements the MiT backbone and MLP decoder.
-        # mit_b3 is the recommended 'Quality' choice for RTX 50-series.
+        # mit_b2 is the recommended 'Quality' choice for RTX 50-series.
         self.model = smp.Segformer(
             encoder_name=encoder_name,
             encoder_weights="imagenet",

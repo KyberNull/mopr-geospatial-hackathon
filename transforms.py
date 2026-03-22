@@ -14,7 +14,7 @@ class EvalTransforms:
     '''Transforms for evaluation, including resizing and type conversions. 
         Does only resize and type conversions for consistent evaluation.
     '''
-    def __init__(self, size=(384, 384)):
+    def __init__(self, size=(768, 768)):
         self.size = size
 
     def __call__(self, image, mask=None):
@@ -44,7 +44,7 @@ class TrainTransforms:
     '''Data augmentation transforms for training,
     including random resized cropPIng, horizontal flipping, and rotation.
     '''
-    def __init__(self, size=(384, 384), scale=(0.5, 1.5), ratio=(1, 1), rotation_degrees=5):
+    def __init__(self, size=(768, 768), scale=(0.5, 1.0), ratio=(1, 1), rotation_degrees=5):
         self.size = size
         self.scale = scale
         self.ratio = ratio
@@ -55,7 +55,12 @@ class TrainTransforms:
         ])
         self.random_resized_crop = v2.RandomResizedCrop(size=self.size, scale=self.scale, ratio=self.ratio)
         self.colorjitter = v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05,)
-
+        self.rotate90 = v2.RandomChoice([
+            v2.RandomRotation((0, 0)),
+            v2.RandomRotation((90, 90)),
+            v2.RandomRotation((180, 180)),
+            v2.RandomRotation((270, 270)),
+        ])
     def __call__(self, image, mask=None) -> tuple[torch.Tensor, torch.Tensor]:
         if mask is None:
             if isinstance(image, dict):
@@ -67,10 +72,10 @@ class TrainTransforms:
                 raise TypeError("Invalid arguments")
         image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
 
-        image, mask = self.flips(image, mask)
         image, mask = self.random_resized_crop(image, mask)
+        image, mask = self.flips(image, mask)
+        image, mask = self.rotate90(image, mask)
         image = self.colorjitter(image)
-
         #Converting the image to float32 and mask to int64 as only one channel in mask
         image = F.to_image(image)
         image = F.to_dtype(image, torch.float32, scale=True)

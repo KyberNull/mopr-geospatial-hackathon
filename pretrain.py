@@ -8,7 +8,6 @@ pretraining so train.py can be reserved for downstream/domain training.
 import logging
 from losses import dice_loss, iou_metric
 from model import SegFormer
-import os
 import signal
 import sys
 import torch
@@ -18,7 +17,6 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torchgeo.datasets import LoveDA
 from tqdm import tqdm
-from train_phase_1 import NUM_EPOCHS_PHASE_1
 from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
@@ -29,11 +27,11 @@ BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
 WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 5
 MODEL_PATH = "model.pt"
-NUM_BATCHES = 16
+BATCH_SIZE = 4
 NUM_CLASSES = 7
-NUM_EPOCHS_PHASE_2 = 50
-NUM_EPOCHS = NUM_EPOCHS_PHASE_2 + NUM_EPOCHS_PHASE_1
-NUM_WORKERS = min(4, os.cpu_count() or 1)
+NUM_EPOCHS_PRETRAIN = 50
+NUM_EPOCHS = NUM_EPOCHS_PRETRAIN
+NUM_WORKERS = 2
 VAL_INTERVAL = 5
 NUM_VAL_SAMPLES = 150
 ###-----------------------###
@@ -131,17 +129,15 @@ def validate(model, validation_loader, device, criterion):
 
 	model.train()
 
-def load_checkpoint(model_path, model):
-	start_epoch = NUM_EPOCHS_PHASE_1
-	train_loader, validation_loader = get_dataloaders()
-	optimizer = optim.AdamW(get_adamw_param_groups(model, LEARNING_RATE, BACKBONE_LEARNING_RATE, WEIGHT_DECAY), lr=LEARNING_RATE)
+def load_checkpoint(model_path, model, train_loader):
+	start_epoch = 0
+	optimizer = optim.AdamW(get_adamw_param_groups(model, WEIGHT_DECAY), lr=LEARNING_RATE)
 	scheduler = setup_scheduler(train_loader, optimizer)
 	scaler = torch.GradScaler(enabled=(device.type == "cuda")) # GradScaler is only useful on CUDA where float16 gradients can underflow.
 	try:
 		ckpt = torch.load(model_path, map_location=device)
 		state_dict = ckpt["model_state"]
 		ckpt_epoch = ckpt.get("epoch", -1) + 1
-			
 		# Remove segmentation head params from checkpoint when number of classes differ.
 		keys_to_remove = []
 		for k, v in list(state_dict.items()):
@@ -169,12 +165,12 @@ def load_checkpoint(model_path, model):
 		model.load_state_dict(state_dict, strict=False)
 
 		# Resume optimizer/scheduler only for true phase-2 continuation.
-		is_phase_2_resume = NUM_EPOCHS_PHASE_1 < ckpt_epoch < NUM_EPOCHS
+		is_phase_2_resume = 0 < ckpt_epoch < NUM_EPOCHS
 		has_train_state = all(k in ckpt for k in ("optim_state", "scheduler_state", "scaler_state"))
 
 		if keys_to_remove:
 			logger.warning("Head class mismatch detected earlier — resetting optimizer/scheduler/scaler for clean phase transition.")
-			start_epoch = NUM_EPOCHS_PHASE_1
+			start_epoch = 0
 		elif is_phase_2_resume and has_train_state:
 			optimizer.load_state_dict(ckpt["optim_state"])
 			scheduler.load_state_dict(ckpt["scheduler_state"])
@@ -182,7 +178,7 @@ def load_checkpoint(model_path, model):
 			start_epoch = ckpt_epoch
 			logger.info("Resuming phase-2 optimizer/scheduler state.")
 		else:
-			start_epoch = NUM_EPOCHS_PHASE_1
+			start_epoch = 0
 			if ckpt_epoch >= NUM_EPOCHS:
 				logger.info("Phase-2 checkpoint already complete; starting from phase-2 boundary with fresh optimizer/scheduler.")
 			else:
@@ -195,7 +191,7 @@ def load_checkpoint(model_path, model):
 
 	logger.info(f"Resuming pretraining from epoch {start_epoch+1}")
 
-	return model, optimizer, scheduler, scaler, start_epoch, train_loader, validation_loader
+	return model, optimizer, scheduler, scaler, start_epoch, train_loader
 
 def get_dataloaders():
 	train_dataset = LoveDA(
@@ -204,27 +200,28 @@ def get_dataloaders():
 		scene=['rural', 'urban'],
 		transforms=TrainTransforms(), #type: ignore
 		download=False,
-		)
+	)
 	val_dataset = LoveDA(
 		root='./data/phase-2',
 		split = 'val',
 		scene=['rural', 'urban'],
 		transforms=EvalTransforms(), #type: ignore
 		download=False,
-		)
+	)
 	train_dataloader = DataLoader(
 		dataset=train_dataset,
-		batch_size=NUM_BATCHES,
+		batch_size=BATCH_SIZE,
 		shuffle=True,
 		num_workers=NUM_WORKERS,
 		pin_memory=pin_memory,
 		persistent_workers=NUM_WORKERS > 0,
-		)
+		prefetch_factor=1
+	)
 	val_dataloader = DataLoader(
 		dataset=val_dataset,
 		shuffle=False,
 		pin_memory=pin_memory,
-		)
+	)
 	return train_dataloader, val_dataloader
 
 def setup_scheduler(train_loader, optimizer):
@@ -251,8 +248,10 @@ def setup_scheduler(train_loader, optimizer):
 
 def main(device, model_path):
 	model = SegFormer(num_classes=NUM_CLASSES).to(device=device, non_blocking=True)
+	
+	train_loader, validation_loader = get_dataloaders()
 
-	model, optimizer, scheduler, scaler, start_epoch, train_loader, validation_loader = load_checkpoint(model_path, model)
+	model, optimizer, scheduler, scaler, start_epoch, train_loader = load_checkpoint(model_path, model, train_loader)
 	model = torch.compile(model)
 	criterion = nn.CrossEntropyLoss(ignore_index=255)
 
