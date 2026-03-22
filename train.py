@@ -9,7 +9,6 @@ from datasets import geospatial_dataset
 import logging
 from losses import dice_loss, iou_metric
 from model import SegFormer
-import os
 import signal
 import sys
 import torch
@@ -24,8 +23,6 @@ from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_l
 
 ###-------CONSTANTS-------###
 LEARNING_RATE = 1e-4
-BACKBONE_FACTOR = 10
-BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
 WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"

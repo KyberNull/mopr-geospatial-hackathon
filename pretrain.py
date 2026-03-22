@@ -21,18 +21,16 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 3e-4
-BACKBONE_FACTOR = 20
-BACKBONE_LEARNING_RATE = LEARNING_RATE / BACKBONE_FACTOR
+LEARNING_RATE = 5e-5
 WEIGHT_DECAY = 0.01
-WARMUP_EPOCHS = 5
+WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"
-BATCH_SIZE = 4
-NUM_CLASSES = 7
+BATCH_SIZE = 8
+NUM_CLASSES = 8
 NUM_EPOCHS_PRETRAIN = 50
 NUM_EPOCHS = NUM_EPOCHS_PRETRAIN
 NUM_WORKERS = 2
-VAL_INTERVAL = 5
+VAL_INTERVAL = 1
 NUM_VAL_SAMPLES = 150
 ###-----------------------###
 
@@ -253,7 +251,7 @@ def main(device, model_path):
 
 	model, optimizer, scheduler, scaler, start_epoch, train_loader = load_checkpoint(model_path, model, train_loader)
 	model = torch.compile(model)
-	criterion = nn.CrossEntropyLoss(ignore_index=255)
+	criterion = nn.CrossEntropyLoss(ignore_index=0)
 
 	model.train()
 	for epoch in range(start_epoch, NUM_EPOCHS):

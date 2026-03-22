@@ -22,8 +22,6 @@ class EvalTransforms:
             if isinstance(image, dict):
                 sample = image
                 image, mask = sample['image'], sample['mask']
-                mask = mask - 1
-                mask[mask < 0] = 255
             else:
                 raise TypeError("Invalid arguments")
         image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
@@ -35,8 +33,7 @@ class EvalTransforms:
         image = F.to_dtype(image, torch.float32, scale=True)
         image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
-        mask = F.to_image(mask)
-        mask = F.to_dtype(mask, torch.int64, scale=False)
+        mask = mask.to(torch.int64)
 
         return image, mask
 
@@ -54,7 +51,6 @@ class TrainTransforms:
             v2.RandomVerticalFlip(),
         ])
         self.random_resized_crop = v2.RandomResizedCrop(size=self.size, scale=self.scale, ratio=self.ratio)
-        #self.colorjitter = v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05,)
         self.rotate90 = v2.RandomChoice([
             v2.RandomRotation((0, 0)),
             v2.RandomRotation((90, 90)),
@@ -67,8 +63,6 @@ class TrainTransforms:
             if isinstance(image, dict):
                 sample = image
                 image, mask = sample['image'], sample['mask']
-                mask = mask - 1
-                mask[mask < 0] = 255
             else:
                 raise TypeError("Invalid arguments")
         image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
@@ -76,13 +70,12 @@ class TrainTransforms:
         image, mask = self.random_resized_crop(image, mask)
         image, mask = self.flips(image, mask)
         image, mask = self.rotate90(image, mask)
-        #image = self.colorjitter(image)
+        
         #Converting the image to float32 and mask to int64 as only one channel in mask
         image = F.to_image(image)
         image = F.to_dtype(image, torch.float32, scale=True)
         image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
-        mask = F.to_image(mask)
-        mask = F.to_dtype(mask, torch.int64, scale=False)
+        mask = mask.to(torch.int64)
 
         return image, mask
