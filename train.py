@@ -22,7 +22,7 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 3e-5
 WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"
@@ -126,64 +126,68 @@ def validate(model, validation_loader, device, criterion, epoch):
 	#freeze_encoder(model)
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, scaler=None):
-    start_epoch = NUM_EPOCHS_PRETRAIN  # Default to starting at phase 3 
+	start_epoch = NUM_EPOCHS_PRETRAIN  # Default to starting at phase 3 
+	new_segmentation_head = False
 
-    try:
-        ckpt = torch.load(path, map_location="cpu")
-        state_dict = ckpt["model_state"]
+	try:
+		ckpt = torch.load(path, map_location="cpu")
+		state_dict = ckpt["model_state"]
 
-        # ---- Handle segmentation head mismatch (safe version) ----
-        for k in list(state_dict.keys()):
-            if k.endswith("segmentation_head.weight"):
-                weight_key = k
-                bias_key = k.replace("weight", "bias")
+		# ---- Handle segmentation head mismatch (safe version) ----
+		for k in list(state_dict.keys()):
+			if "segmentation_head.0.weight" in k:
+				# Check the shape in the checkpoint vs current model
+				# model.state_dict() will have the '_orig_mod' prefix if compiled
+				model_state = model.state_dict()
+				
+				if k in model_state:
+					old_num_classes = state_dict[k].shape[0]
+					new_num_classes = model_state[k].shape[0]
 
-                old_classes = state_dict[weight_key].shape[0]
-                new_classes = model.state_dict()[weight_key].shape[0]
+					if old_num_classes != new_num_classes:
+						logger.warning(f"Shape mismatch at {k}: {old_num_classes} -> {new_num_classes}. Dropping head.")
+						new_segmentation_head = True
+						del state_dict[k]
+						# Also remove the bias
+						bias_key = k.replace("weight", "bias")
+						if bias_key in state_dict:
+							del state_dict[bias_key]
+				break
 
-                if old_classes != new_classes:
-                    logger.warning(
-                        f"Segmentation head mismatch ({old_classes} → {new_classes}), dropping head weights"
-                    )
-                    del state_dict[weight_key]
-                    if bias_key in state_dict:
-                        del state_dict[bias_key]
-                break
+		# ---- Load model weights ----
+		missing, unexpected = model.load_state_dict(state_dict, strict=False)
+		logger.warning(f"Missing keys: {missing}")
+		logger.warning(f"Unexpected keys: {unexpected}")
 
-        # ---- Load model weights ----
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        logger.warning(f"Missing keys: {missing}")
-        logger.warning(f"Unexpected keys: {unexpected}")
+		# ---- Resume training state if available ----
+		has_train_state = all(
+			k in ckpt for k in ("optim_state", "scheduler_state", "scaler_state")
+		)
 
-        # ---- Resume training state if available ----
-        has_train_state = all(
-            k in ckpt for k in ("optim_state", "scheduler_state", "scaler_state")
-        )
+		if has_train_state and not new_segmentation_head and optimizer and scheduler and scaler:
+			optimizer.load_state_dict(ckpt["optim_state"])
+			scheduler.load_state_dict(ckpt["scheduler_state"])
+			scaler.load_state_dict(ckpt["scaler_state"])
+			start_epoch = ckpt.get("epoch", 0) + 1
+			logger.info(f"Resuming training from epoch {start_epoch}")
+		else:
+			logger.info("Loaded model weights only (fresh optimizer/scheduler).")
 
-        if has_train_state and optimizer and scheduler and scaler:
-            optimizer.load_state_dict(ckpt["optim_state"])
-            scheduler.load_state_dict(ckpt["scheduler_state"])
-            scaler.load_state_dict(ckpt["scaler_state"])
-            start_epoch = ckpt.get("epoch", 0) + 1
-            logger.info(f"Resuming training from epoch {start_epoch}")
-        else:
-            logger.info("Loaded model weights only (fresh optimizer/scheduler).")
+	except FileNotFoundError:
+		logger.warning("Checkpoint not found. Starting from scratch.")
 
-    except FileNotFoundError:
-        logger.warning("Checkpoint not found. Starting from scratch.")
+	except (RuntimeError, KeyError) as err:
+		logger.error(f"Incompatible checkpoint: {err}")
+		logger.warning("Starting from scratch.")
 
-    except (RuntimeError, KeyError) as err:
-        logger.error(f"Incompatible checkpoint: {err}")
-        logger.warning("Starting from scratch.")
-
-    return start_epoch
+	return start_epoch
 
 def get_dataloaders():
 	#Importing the trainning and validation villages
-	train_img_dir = "data/TrainningDataset/processed_datasets"
-	train_mask_dir = "data/TrainningDataset/processed_masks"
-	val_img_dir = "data/ValidationDataset/processed_datasets"
-	val_mask_dir = "data/ValidationDataset/processed_masks"
+	train_img_dir = "data/phase-3/TrainningDataset/processed_datasets"
+	train_mask_dir = "data/phase-3/TrainningDataset/processed_masks"
+	val_img_dir = "data/phase-3/ValidationDataset/processed_datasets"
+	val_mask_dir = "data/phase-3/ValidationDataset/processed_masks"
 
 	train_dataset = geospatial_dataset(
 		img_dir=train_img_dir,
