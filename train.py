@@ -7,7 +7,7 @@ pretraining so train.py can be reserved for downstream/domain training.
 
 from datasets import geospatial_dataset
 import logging
-from losses import dice_loss, iou_metric
+from losses import dice_loss, iou_metric, focal_loss
 from model import SegFormer
 import signal
 import sys
@@ -22,7 +22,7 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 3e-5
+LEARNING_RATE = 7e-5
 WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"
@@ -255,7 +255,7 @@ def main(device, model_path):
 
 	start_epoch = load_checkpoint(model_path, model, optimizer, scheduler, scaler)
 
-	criterion = nn.CrossEntropyLoss()
+	criterion = focal_loss
 
 	model.train()
 	#freeze_encoder(model)

@@ -1,7 +1,12 @@
 """Loss and metric helpers for segmentation training and evaluation."""
 
 import torch
-import torch.nn.functional as F
+import segmentation_models_pytorch as smp
+
+focal_loss = smp.losses.FocalLoss(
+    mode="multiclass",   # important for your case
+    gamma=2.0,
+)
 
 def dice_loss(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smooth=1e-8):
     pred = torch.softmax(pred, dim=1)

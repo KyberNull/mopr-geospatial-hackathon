@@ -21,11 +21,11 @@ from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 5e-5
+LEARNING_RATE = 7e-5
 WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"
-BATCH_SIZE = 4
+BATCH_SIZE = 8
 NUM_CLASSES = 8
 NUM_EPOCHS_PRETRAIN = 50
 NUM_EPOCHS = NUM_EPOCHS_PRETRAIN
