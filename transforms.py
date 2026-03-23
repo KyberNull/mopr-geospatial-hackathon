@@ -1,5 +1,7 @@
 """Data Augmentation and preprocessing transforms for Segmentation."""
 
+import cv2
+import numpy as np
 import torch
 from torchvision import tv_tensors
 from torchvision.transforms import v2, InterpolationMode
@@ -8,6 +10,24 @@ from torchvision.transforms.v2 import functional as F
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
+
+def apply_clahe(image):
+    # image: torch tensor [C, H, W] in float32 [0,1]
+    img = image.permute(1, 2, 0).cpu().numpy()  # HWC
+
+    img = (img * 255).astype(np.uint8)
+
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+
+    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+
+    lab = cv2.merge((l, a, b))
+    img = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+    img = img.astype(np.float32) / 255.0
+    return torch.from_numpy(img).permute(2, 0, 1)
 
 class EvalTransforms:
     '''Transforms for evaluation, including resizing and type conversions. 
@@ -30,6 +50,7 @@ class EvalTransforms:
         mask = F.resize(mask, self.size, interpolation=InterpolationMode.NEAREST)
 
         image = F.to_image(image)
+        image = apply_clahe(image)
         image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
         mask = mask.to(torch.int64)
@@ -71,6 +92,7 @@ class TrainTransforms:
         
         #Converting the image to float32 and mask to int64 as only one channel in mask
         image = F.to_image(image)
+        image = apply_clahe(image)
         image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
         mask = mask.to(torch.int64)
