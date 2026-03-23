@@ -156,8 +156,10 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, scaler=None):
 
 		# ---- Load model weights ----
 		missing, unexpected = model.load_state_dict(state_dict, strict=False)
-		logger.warning(f"Missing keys: {missing}")
-		logger.warning(f"Unexpected keys: {unexpected}")
+		if missing:
+			logger.warning(f"Missing keys: {missing}")
+		if unexpected:
+			logger.warning(f"Unexpected keys: {unexpected}")
 
 		# ---- Resume training state if available ----
 		has_train_state = all(
