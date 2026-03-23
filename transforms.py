@@ -98,3 +98,48 @@ class TrainTransforms:
         mask = mask.to(torch.int64)
 
         return image, mask
+
+class PostProcessing:
+    def __init__(self, num_classes, min_area=50, threshold=0.5):
+        self.num_classes = num_classes
+        self.min_area = min_area
+        self.threshold = threshold
+        self.kernel = np.ones((3, 3), np.uint8)
+
+    def __call__(self, logits):
+        probs = torch.softmax(logits, dim=1)  # (B, C, H, W)
+
+        if probs.ndim == 4:
+            return torch.stack([self._process_single(p) for p in probs])
+
+        return self._process_single(probs)
+
+    def _process_single(self, probs):
+        probs = probs.cpu().numpy()  # (C, H, W)
+
+        final_mask = np.zeros(probs.shape[1:], dtype=np.int32)
+
+        for cls in range(self.num_classes):
+            cls_prob = probs[cls]
+
+            # Threshold FIRST
+            binary = (cls_prob > self.threshold).astype(np.uint8)
+
+            # Morphological cleanup
+            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, self.kernel)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, self.kernel)
+
+            # Connected components
+            num_labels, labels = cv2.connectedComponents(binary)
+
+            for label in range(1, num_labels):
+                component = (labels == label).astype(np.uint8)
+
+                area = np.sum(component)
+
+                if area < self.min_area:
+                    continue
+
+                final_mask[component == 1] = cls
+
+        return torch.from_numpy(final_mask).long()

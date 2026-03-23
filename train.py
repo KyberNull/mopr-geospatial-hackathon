@@ -7,18 +7,18 @@ pretraining so train.py can be reserved for downstream/domain training.
 
 from datasets import geospatial_dataset
 import logging
-from losses import dice_loss, iou_metric, focal_loss
+from losses import dice_loss, iou_metric, iou_metric_processed_fast, focal_loss
 from model import SegFormer
 import signal
 import sys
 import torch
-from torch import nn, optim, autocast
+from torch import optim, autocast
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from pretrain import NUM_EPOCHS_PRETRAIN
-from transforms import TrainTransforms, EvalTransforms
+from transforms import TrainTransforms, EvalTransforms, PostProcessing
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
@@ -91,6 +91,7 @@ def validate(model, validation_loader, device, criterion, epoch):
 	model.eval()
 	running_val_loss = 0.0
 	total_iou = 0.0
+	total_iou_processed = 0.0
 	val_iterator = iter(validation_loader)
 
 	with torch.no_grad():
@@ -107,6 +108,7 @@ def validate(model, validation_loader, device, criterion, epoch):
 			with autocast(device_type=device.type, dtype=amp_dtype):
 				val_prediction = model(val_input)
 				val_loss = criterion(val_prediction, val_output)
+				processed_mask = PostProcessing(NUM_CLASSES)(val_prediction)
 
 			if not torch.isfinite(val_loss):
 				continue
@@ -114,16 +116,20 @@ def validate(model, validation_loader, device, criterion, epoch):
 			running_val_loss += val_loss.item()
 
 			iou = iou_metric(val_prediction, val_output, NUM_CLASSES)
+			iou_processed = iou_metric_processed_fast(processed_mask, val_output, NUM_CLASSES)
 			total_iou += float(iou)
+			total_iou_processed += float(iou_processed)
 
 		total_iou /= NUM_VAL_SAMPLES
+		total_iou_processed /= NUM_VAL_SAMPLES
 		running_val_loss /= NUM_VAL_SAMPLES
 
 		logger.info(f"mCEL: {running_val_loss:.4f}")
 		logger.info(f"mIoU: {total_iou:.4f}")
+		logger.info(f"mIoU (Processed): {total_iou_processed:.4f}")
+
 
 	model.train()
-	#freeze_encoder(model)
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, scaler=None):
 	start_epoch = NUM_EPOCHS_PRETRAIN  # Default to starting at phase 3 

@@ -61,3 +61,35 @@ def iou_metric(pred: torch.Tensor, target: torch.Tensor, num_classes: int, smoot
 
     iou = (iou_per_class * class_present).sum() / present_count
     return iou
+
+def iou_metric_processed_fast(pred, target, num_classes, eps=1e-6):
+    """
+    pred: (B, H, W) - processed predictions
+    target: (B, H, W)
+    """
+
+    device = pred.device
+    target = target.to(device)
+
+    pred = pred.view(-1)
+    target = target.view(-1)
+
+    # Clamp just in case
+    pred = pred.long()
+    target = target.long()
+
+    # Build confusion matrix
+    cm = torch.bincount(
+        num_classes * target + pred,
+        minlength=num_classes * num_classes
+    ).reshape(num_classes, num_classes)
+
+    # Intersection = diagonal
+    intersection = cm.diag()
+
+    # Union = sum over row + col - intersection
+    union = cm.sum(1) + cm.sum(0) - intersection
+
+    iou = (intersection + eps) / (union + eps)
+
+    return iou.mean()
