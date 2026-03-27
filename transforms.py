@@ -100,11 +100,10 @@ class TrainTransforms:
         return image, mask
 
 class PostProcessing:
-    def __init__(self, num_classes, min_area=50, threshold=0.5):
+    def __init__(self, num_classes, min_area=150, hole_area=150):
         self.num_classes = num_classes
         self.min_area = min_area
-        self.threshold = threshold
-        self.kernel = np.ones((3, 3), np.uint8)
+        self.hole_area = hole_area
 
     def __call__(self, logits):
         probs = torch.softmax(logits, dim=1)  # (B, C, H, W)
@@ -115,31 +114,221 @@ class PostProcessing:
         return self._process_single(probs)
 
     def _process_single(self, probs):
+        processors = {
+            1: PostProcessingRoads(),
+            2: PostProcessingBuildings(),
+            3: PostProcessingWater(),
+        }
+
         probs = probs.cpu().numpy()  # (C, H, W)
 
-        final_mask = np.zeros(probs.shape[1:], dtype=np.int32)
+        # 1. Use argmax to lock in the predictions and resolve overlaps
+        base_mask = np.argmax(probs, axis=0).astype(np.uint8)
+        final_mask = np.zeros_like(base_mask)
 
-        for cls in range(self.num_classes):
-            cls_prob = probs[cls]
+        for cls in range(1, self.num_classes):  # Skipping Background class 0
+            cls_mask = (base_mask == cls).astype(np.uint8)
 
-            # Threshold FIRST
-            binary = (cls_prob > self.threshold).astype(np.uint8)
+            # 2. Extract BOTH external boundaries (islands) and internal holes using CCOMP hierarchy
+            contours, hierarchy = cv2.findContours(cls_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if hierarchy is not None:
+                hierarchy = hierarchy[0]
+                for i in range(len(contours)):
+                    is_hole = hierarchy[i][3] != -1
+                    area = cv2.contourArea(contours[i])
 
-            # Morphological cleanup
-            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, self.kernel)
-            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, self.kernel)
+                    if is_hole and area < self.hole_area:
+                        cv2.drawContours(cls_mask, [contours[i]], -1, 1, -1)  # Fill tiny internal hole
+                    elif not is_hole and area < self.min_area:
+                        cv2.drawContours(cls_mask, [contours[i]], -1, 0, -1)  # Erase tiny external island
 
-            # Connected components
-            num_labels, labels = cv2.connectedComponents(binary)
+            # 3. Use larger kernels for 512x512 images (3x3 is too small)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+            cls_mask = cv2.morphologyEx(cls_mask, cv2.MORPH_OPEN, kernel)
+            cls_mask = cv2.morphologyEx(cls_mask, cv2.MORPH_CLOSE, kernel)
 
-            for label in range(1, num_labels):
-                component = (labels == label).astype(np.uint8)
+            cls_mask = processors[cls](torch.from_numpy(cls_mask)).numpy().astype(np.uint8)
 
-                area = np.sum(component)
+            final_mask[cls_mask == 1] = cls
 
-                if area < self.min_area:
-                    continue
+        return torch.from_numpy(final_mask).long()
 
-                final_mask[component == 1] = cls
+    def _straighten_edges(self, binary_mask):
+        """Takes wavy predictions and snaps them to straight-edged polygons."""
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        straight_mask = np.zeros_like(binary_mask)
+        
+        for c in contours:
+            if cv2.contourArea(c) < self.min_area:
+                continue
+            # Epsilon dictates how aggressive the straightening is (0.01 to 0.04 is typical)
+            epsilon = 0.02 * cv2.arcLength(c, True) 
+            approx = cv2.approxPolyDP(c, epsilon, True)
+            cv2.drawContours(straight_mask, [approx], -1, 1, -1)
+        
+        return straight_mask
+
+class PostProcessingRoads:
+    def __init__(self, min_road_area=400, gap_threshold=15, road_width=5):
+        """
+        Args:
+            min_road_area: Removes any isolated road segment smaller than this (pixels).
+            gap_threshold: Bridges gaps of this size between road segments (pixels).
+            road_width: The fixed width to dilate the roads back to.
+        """
+        self.min_road_area = min_road_area
+        self.gap_threshold = gap_threshold
+        self.road_width = road_width
+
+    def __call__(self, road_logits):
+        """
+        Assumes road_logits is (B, H, W) binary mask or probability map.
+        If it's multi-class, slice it for your ROAD index first!
+        """
+        if road_logits.ndim == 3:
+            return torch.stack([self._process_single(r) for r in road_logits])
+        return self._process_single(road_logits)
+
+    def _process_single(self, road_prob):
+        # Convert torch tensor probability map to binary 
+        road_prob = road_prob.cpu().numpy()
+        binary_road = (road_prob > 0.5).astype(np.uint8)
+
+        # STAGE 1: Remove Isolated Blobs
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_road)
+        clean_mask = np.zeros_like(binary_road)
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] >= self.min_road_area:
+                clean_mask[labels == i] = 1
+
+        # STAGE 2: Connectivity Enforcement (Bridge Gaps)
+        # Using a closing kernel merges road segments that are close together!
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (self.gap_threshold, self.gap_threshold))
+        connected_road = cv2.morphologyEx(clean_mask, cv2.MORPH_CLOSE, kernel_close)
+
+        # STAGE 3: Skeletonization
+        skeleton = np.zeros_like(connected_road)
+        temp = connected_road.copy()
+        element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+
+        # Iterative erosion to strip roads down to 1px spines
+        while True:
+            eroded = cv2.erode(temp, element)
+            temp_open = cv2.dilate(eroded, element)
+            temp_open = cv2.subtract(temp, temp_open)
+            skeleton = cv2.bitwise_or(skeleton, temp_open)
+            temp = eroded.copy()
+            if cv2.countNonZero(temp) == 0:
+                break
+
+        # STAGE 4: Uniform Dilation
+        road_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.road_width, self.road_width))
+        final_road = cv2.dilate(skeleton, road_kernel)
+
+        return torch.from_numpy(final_road).long()
+    
+class PostProcessingBuildings:
+    def __init__(self, min_area=100, epsilon_factor=0.02, strict_rectangles=False):
+        """
+        Args:
+            min_area: Removes isolated building specks smaller than this (pixels).
+            epsilon_factor: Precision of edge snapping (higher = straighter lines).
+            strict_rectangles: If True, forces the mask into a perfect 4-sided bounding box.
+        """
+        self.min_area = min_area
+        self.epsilon_factor = epsilon_factor
+        self.strict_rectangles = strict_rectangles
+        self.kernel = np.ones((5, 5), np.uint8)  # Larger 5x5 kernel for cleanup
+
+    def __call__(self, building_logits):
+        if building_logits.ndim == 3:
+            return torch.stack([self._process_single(b) for b in building_logits])
+        return self._process_single(building_logits)
+
+    def _process_single(self, building_prob):
+        building_prob = building_prob.cpu().numpy()
+        binary_build = (building_prob > 0.5).astype(np.uint8)
+
+        # STAGE 1: Morphological Cleanup (Close small holes inside buildings)
+        cleaned_mask = cv2.morphologyEx(binary_build, cv2.MORPH_CLOSE, self.kernel)
+        cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_OPEN, self.kernel)
+
+        # STAGE 2: Remove Tiny Connected Components
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(cleaned_mask)
+        area_mask = np.zeros_like(cleaned_mask)
+        
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] >= self.min_area:
+                area_mask[labels == i] = 1
+
+        # STAGE 3: Polygon Regularization (Snap to straight edges)
+        contours, _ = cv2.findContours(area_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        final_mask = np.zeros_like(area_mask)
+
+        for c in contours:
+            if cv2.contourArea(c) < self.min_area:
+                continue
+
+            if self.strict_rectangles:
+                # Forces 4-sided bounding boxes (excellent for simple suburbs)
+                rect = cv2.minAreaRect(c)
+                box = cv2.boxPoints(rect)
+                box = np.int32(box)
+                cv2.drawContours(final_mask, [box.reshape(-1, 1, 2)], -1, 1, -1)
+            else:
+                # 📐 Keeps architectural complexity (L-shapes, U-shapes) but straightens wavy edges
+                epsilon = self.epsilon_factor * cv2.arcLength(c, True)
+                approx = cv2.approxPolyDP(c, epsilon, True)
+                cv2.drawContours(final_mask, [approx], -1, 1, -1)
+
+        return torch.from_numpy(final_mask).long()
+
+class PostProcessingWater:
+    def __init__(self, min_area=1000, kernel_size=7, blur_sigma=3.0):
+        """
+        Args:
+            min_area: Removes isolated puddles smaller than this (pixels).
+            kernel_size: 5 or 7 for closing gaps inside the river network.
+            blur_sigma: Gaussian standard deviation. Controls how smooth the coastline is.
+        """
+        self.min_area = min_area
+        self.kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        self.blur_sigma = blur_sigma
+
+    def __call__(self, water_logits):
+        if water_logits.ndim == 3:
+            return torch.stack([self._process_single(w) for w in water_logits])
+        return self._process_single(water_logits)
+
+    def _process_single(self, water_prob):
+        water_prob = water_prob.cpu().numpy()
+        binary_water = (water_prob > 0.5).astype(np.uint8)
+
+        # STAGE 1: Morphological Closing (Bridge sandbars and fill internal holes)
+        closed_mask = cv2.morphologyEx(binary_water, cv2.MORPH_CLOSE, self.kernel)
+
+        # STAGE 2: Area Filtering (Wipe out tiny spurious puddles)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(closed_mask)
+        clean_mask = np.zeros_like(closed_mask)
+        
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] >= self.min_area:
+                clean_mask[labels == i] = 1
+
+        # STAGE 3: Gaussian Melt for Organic Outlines
+        if self.blur_sigma > 0:
+            # Scale kernel size proportionally to the sigma
+            k_size = int(6 * self.blur_sigma + 1)
+            if k_size % 2 == 0:
+                k_size += 1
+            
+            # Blur the binary mask to create continuous gradients
+            blurred = cv2.GaussianBlur(clean_mask.astype(np.float32), (k_size, k_size), self.blur_sigma)
+            
+            # Re-threshold at 0.5 to harden the smooth edge back into a crisp binary mask
+            final_mask = (blurred > 0.5).astype(np.uint8)
+        else:
+            final_mask = clean_mask
 
         return torch.from_numpy(final_mask).long()

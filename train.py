@@ -230,7 +230,7 @@ def setup_scheduler(train_loader, optimizer):
 		max(0, NUM_EPOCHS_PHASE_3 * len(train_loader) - 1),
 	)
 
-	scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS_PHASE_3 * len(train_loader) - warmup_steps, eta_min=LEARNING_RATE * 0.1)
+	scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS_PHASE_3 * len(train_loader) - warmup_steps - NUM_EPOCHS_PRETRAIN, eta_min=LEARNING_RATE * 0.1)
 
 	if warmup_steps > 0:
 		warmup_scheduler = LinearLR(

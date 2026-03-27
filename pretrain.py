@@ -6,7 +6,7 @@ pretraining so train.py can be reserved for downstream/domain training.
 """
 
 import logging
-from losses import dice_loss, iou_metric, iou_metric_processed_fast, focal_loss
+from losses import dice_loss, iou_metric, focal_loss
 from model import SegFormer
 import signal
 import sys
@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 from torchgeo.datasets import LoveDA
 from tqdm import tqdm
-from transforms import TrainTransforms, EvalTransforms, PostProcessing
+from transforms import TrainTransforms, EvalTransforms
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging
 
 ###-------CONSTANTS-------###
@@ -48,7 +48,7 @@ def handle_shutdown(sig, frame):
 def train_batch(model, epoch, train_loader, optimizer, scheduler, scaler, criterion):
 	epoch_bar = tqdm(
 		train_loader,
-		desc=f"[Phase 2] Epoch {epoch + 1}/{NUM_EPOCHS}",
+		desc=f"[Pretrain] Epoch {epoch + 1}/{NUM_EPOCHS}",
 		leave=True,
 		disable=not sys.stdout.isatty(),
 		position=0,
@@ -94,7 +94,6 @@ def validate(model, validation_loader, device, criterion):
 	model.eval()
 	running_val_loss = 0.0
 	total_iou = 0.0
-	total_iou_processed = 0.0
 	val_iterator = iter(validation_loader)
 
 	with torch.no_grad():
@@ -111,7 +110,6 @@ def validate(model, validation_loader, device, criterion):
 			with autocast(device_type=device.type, dtype=amp_dtype):
 				val_prediction = model(val_input)
 				val_loss = criterion(val_prediction.float(), val_output)
-				processed_mask = PostProcessing(NUM_CLASSES)(val_prediction)
 
 			if not torch.isfinite(val_loss):
 				continue
@@ -121,16 +119,11 @@ def validate(model, validation_loader, device, criterion):
 			iou = iou_metric(val_prediction, val_output, NUM_CLASSES)
 			total_iou += float(iou)
 
-			iou_processed = iou_metric_processed_fast(processed_mask, val_output, NUM_CLASSES)
-			total_iou_processed += float(iou_processed)
-
 		total_iou /= NUM_VAL_SAMPLES
-		total_iou_processed /= NUM_VAL_SAMPLES
 		running_val_loss /= NUM_VAL_SAMPLES
 
 		logger.info(f"mCEL: {running_val_loss:.4f}")
 		logger.info(f"mIoU: {total_iou:.4f}")
-		logger.info(f"mIoU (processed): {total_iou_processed:.4f}")
 	model.train()
 
 def load_checkpoint(model_path, model, train_loader):
