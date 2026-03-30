@@ -107,6 +107,8 @@ def main():
         pbar = tqdm(total=len(rows)*len(cols), desc="Processing Patches")
         for r in rows:
             for c in cols:
+                if shutdown_requested:
+                    sys.exit(0)
                 win = Window.from_slices((r, r + PATCH_SIZE), (c, c + PATCH_SIZE))
                 
                 #Exytract the .tiff patch
