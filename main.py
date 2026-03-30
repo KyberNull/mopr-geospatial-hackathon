@@ -59,6 +59,36 @@ def _adapt_state_dict_for_model(state_dict, model):
 
     return state_dict
 
+
+def _is_blank_patch(patch_rgb, nodata):
+    """Return True for empty/no-data patches to avoid model edge artifacts."""
+    patch = np.asarray(patch_rgb, dtype=np.float32)
+    if patch.size == 0:
+        return True
+    if np.isnan(patch).all():
+        return True
+
+    finite = patch[np.isfinite(patch)]
+    if finite.size == 0:
+        return True
+
+    # Nearly constant tiles are usually nodata fill in orthophoto boundaries.
+    if (float(np.max(finite)) - float(np.min(finite))) <= 1.0:
+        return True
+
+    # Heuristic for almost-all black/white tiles after boundless reads.
+    black_ratio = float(np.mean(patch <= 1.0))
+    white_ratio = float(np.mean(patch >= 254.0))
+    if black_ratio >= 0.995 or white_ratio >= 0.995:
+        return True
+
+    if nodata is not None:
+        nodata_ratio = float(np.mean(np.isclose(patch, float(nodata), atol=1.0)))
+        if nodata_ratio >= 0.995:
+            return True
+
+    return False
+
 def vectorize_chunk(args):
     """Processes a small chunk of the predicted data into polygons"""
     chunk_mask, chunk_transform, class_val = args
@@ -120,19 +150,23 @@ def main():
                 PILImage.fromarray(rgb_patch).save(os.path.join(DATASET_DIR, f"{patch_id}.png"))
 
 
-                #Making a dummy mask to be passed into EvalTransform as it needs both an image and a mask
-                img_t = tv_tensors.Image(torch.from_numpy(patch[:3]))
-                dummy_m = tv_tensors.Mask(torch.zeros((1, PATCH_SIZE, PATCH_SIZE)))
-                img_t, _ = transform(img_t, dummy_m)
-                
-                #Getting the prediction mask and resizing it up
-                with torch.no_grad():
-                    preds = model(img_t.unsqueeze(0).to(device))
-                    mask_512 = post_processor(preds)[0]
-                    mask_1024 = torch.nn.functional.interpolate(
-                        mask_512.unsqueeze(0).unsqueeze(0).float(),
-                        size=(PATCH_SIZE, PATCH_SIZE), mode="nearest"
-                    ).squeeze().cpu().numpy().astype(np.uint8)
+                patch_rgb_chw = patch[:3]
+                if _is_blank_patch(patch_rgb_chw, src.nodata):
+                    mask_1024 = np.zeros((PATCH_SIZE, PATCH_SIZE), dtype=np.uint8)
+                else:
+                    # Making a dummy mask to be passed into EvalTransform as it needs both an image and a mask.
+                    img_t = tv_tensors.Image(torch.from_numpy(patch_rgb_chw))
+                    dummy_m = tv_tensors.Mask(torch.zeros((1, PATCH_SIZE, PATCH_SIZE)))
+                    img_t, _ = transform(img_t, dummy_m)
+
+                    # Getting the prediction mask and resizing it up.
+                    with torch.no_grad():
+                        preds = model(img_t.unsqueeze(0).to(device))
+                        mask_512 = post_processor(preds)[0]
+                        mask_1024 = torch.nn.functional.interpolate(
+                            mask_512.unsqueeze(0).unsqueeze(0).float(),
+                            size=(PATCH_SIZE, PATCH_SIZE), mode="nearest"
+                        ).squeeze().cpu().numpy().astype(np.uint8)
 
                 #Cropping edges so it does not rasterize outside the boundaries
                 valid_h = min(PATCH_SIZE, H - r)
