@@ -2,6 +2,9 @@
 
 import cv2
 import numpy as np
+from skimage.morphology import skeletonize, remove_small_objects
+from scipy.ndimage import convolve, median_filter
+from scipy.spatial import cKDTree
 import torch
 from torchvision import tv_tensors
 from torchvision.transforms import v2, InterpolationMode
@@ -104,9 +107,9 @@ class PostProcessing:
         self.num_classes = num_classes
         # Map class IDs to their specialized processors
         self.processors = {
-            1: PostProcessingRoads(),
+            1: PostProcessingWater(),
             2: PostProcessingBuildings(),
-            3: PostProcessingWater(),
+            3: PostProcessingRoads(),
         }
 
     def __call__(self, logits):
@@ -146,47 +149,132 @@ class PostProcessing:
         cv2.drawContours(mask, pts, -1, color, thickness=-1)
 
 class PostProcessingRoads:
-    def __init__(self, min_area=500, close_kernel_size=7, smooth_sigma=2):
+    def __init__(self, min_area=800, connect_dist=100, min_branch=50):
         self.min_area = min_area
-        self.kernel = np.ones((close_kernel_size, close_kernel_size), np.uint8)
-        self.smooth_sigma = smooth_sigma
+        self.connect_dist = connect_dist
+        self.min_branch = min_branch
+        self.kernel = np.ones((5, 5), np.uint8)
 
     def __call__(self, mask):
         if torch.is_tensor(mask):
             mask = mask.cpu().numpy().astype(np.uint8)
-            
-        # 1. Close gaps first
-        refined_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel)
-        
-        # 2. Gaussian Smoothing - this "melts" the jagged edges into smooth curves
-        # ksize must be odd
-        ksize = int(6 * self.smooth_sigma + 1)
-        if ksize % 2 == 0: ksize += 1
-        
-        # We apply the blur to the mask (0s and 1s)
-        # This creates a "gradient" edge
-        smoothed = cv2.GaussianBlur(refined_mask.astype(np.float32), (ksize, ksize), self.smooth_sigma)
-        
-        # 3. Re-threshold to get hard edges back
-        # Higher threshold (e.g., 0.5) makes roads thinner; lower makes them thicker.
-        _, smooth_mask = cv2.threshold(smoothed, 0.4, 1, cv2.THRESH_BINARY)
-        smooth_mask = smooth_mask.astype(np.uint8)
 
-        # 4. Final Clean-up (Area check)
-        contours, _ = cv2.findContours(smooth_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        final_mask = np.zeros_like(mask)
+        if mask.sum() == 0:
+            return mask
 
-        for c in contours:
-            if cv2.contourArea(c) < self.min_area:
+        # --------------------------------------------------
+        # 1. CLEAN MASK (morphology + remove noise)
+        # --------------------------------------------------
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel)
+        mask = remove_small_objects(mask.astype(bool), min_size=self.min_area)
+        mask = mask.astype(np.uint8)
+
+        # --------------------------------------------------
+        # 2. DISTANCE MAP (road width estimate)
+        # --------------------------------------------------
+        dist_map = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+        dist_map = median_filter(dist_map, size=5)
+
+        # --------------------------------------------------
+        # 3. SKELETON (centerline)
+        # --------------------------------------------------
+        skeleton = skeletonize(mask > 0)
+        skeleton = skeleton.astype(np.uint8)
+
+        # --------------------------------------------------
+        # 4. REMOVE SMALL BRANCHES (graph pruning)
+        # --------------------------------------------------
+        skeleton = remove_small_objects(skeleton.astype(bool), min_size=self.min_branch)
+        skeleton = skeleton.astype(np.uint8)
+
+        # --------------------------------------------------
+        # 5. CONNECT BROKEN ROADS (topology repair)
+        # --------------------------------------------------
+        skeleton = self._connect_endpoints(skeleton)
+
+        # --------------------------------------------------
+        # 6. RECONSTRUCT ROAD WIDTH (buffering)
+        # --------------------------------------------------
+        num_labels, labels = cv2.connectedComponents(skeleton)
+
+        reconstructed = np.zeros_like(mask, dtype=np.uint8)
+
+        for label in range(1, num_labels):
+            component = (labels == label)
+
+            ys, xs = np.where(component)
+            if len(ys) < 20:
                 continue
-            
-            # Use a very small epsilon (0.001) just to reduce point count 
-            # without changing the smooth shape
-            epsilon = 0.001 * cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, epsilon, True)
-            cv2.fillPoly(final_mask, [approx], 1)
 
-        return final_mask
+            widths = dist_map[ys, xs]
+            widths = widths[widths > 0]
+
+            if len(widths) == 0:
+                continue
+
+            radius = int(np.median(widths))
+
+            if radius < 1:
+                continue
+
+            for y, x in zip(ys, xs):
+                cv2.circle(reconstructed, (x, y), radius, 1, -1)
+
+        # --------------------------------------------------
+        # 7. FINAL CLEANUP (OUTSIDE LOOP)
+        # --------------------------------------------------
+        reconstructed = cv2.morphologyEx(reconstructed, cv2.MORPH_CLOSE, self.kernel)
+
+        return reconstructed.astype(np.uint8)
+
+    # ======================================================
+    # 🔥 ENDPOINT CONNECTION (Topology Repair)
+    # ======================================================
+    def _connect_endpoints(self, skel):
+        endpoints = self._find_endpoints(skel)
+
+        if len(endpoints) < 2:
+            return skel
+
+        tree = cKDTree(endpoints)
+
+        for i, p in enumerate(endpoints):
+            dists, idxs = tree.query(p, k=4, distance_upper_bound=self.connect_dist)
+
+            for j in idxs:
+                if j == i or j >= len(endpoints):
+                    continue
+
+                q = endpoints[j]
+
+                # avoid tiny loops
+                if np.linalg.norm(p - q) < 10:
+                    continue
+
+                cv2.line(
+                    skel,
+                    (int(p[1]), int(p[0])),
+                    (int(q[1]), int(q[0])),
+                    1,
+                    1
+                )
+
+        return skel
+
+    # ======================================================
+    # 🔥 ENDPOINT DETECTION
+    # ======================================================
+    def _find_endpoints(self, skel):
+        kernel = np.array([
+            [1, 1, 1],
+            [1, 10, 1],
+            [1, 1, 1]
+        ])
+
+        conv = convolve(skel, kernel, mode='constant', cval=0)
+        endpoints = (conv == 11)
+
+        return np.column_stack(np.where(endpoints))
     
 class PostProcessingBuildings:
     def __init__(self, min_area=100, epsilon_factor=0.015, strict_rectangles=False):
@@ -196,11 +284,9 @@ class PostProcessingBuildings:
         self.kernel = np.ones((5, 5), np.uint8)
 
     def __call__(self, mask):
-        # Handle Tensor vs Numpy
         if torch.is_tensor(mask):
             mask = mask.cpu().numpy().astype(np.uint8)
 
-        # 1. Morphological Cleanup (fills small holes/gaps)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel)
         
         # 2. Extract and Filter contours by area
@@ -226,19 +312,16 @@ class PostProcessingBuildings:
         return final_mask
 
 class PostProcessingWater:
-    def __init__(self, min_area=1000, kernel_size=7, blur_sigma=3.0):
+    def __init__(self, min_area=1000, kernel_size=7):
         self.min_area = min_area
         self.kernel = np.ones((kernel_size, kernel_size), np.uint8)
-        self.blur_sigma = blur_sigma
 
     def __call__(self, mask):
         if torch.is_tensor(mask):
             mask = mask.cpu().numpy().astype(np.uint8)
 
-        # 1. Bridge gaps (sandbars/rivers)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel)
 
-        # 2. Filter tiny puddles and smooth outlines
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         final_mask = np.zeros_like(mask)
 
@@ -247,10 +330,7 @@ class PostProcessingWater:
                 continue
             cv2.fillPoly(final_mask, [c], 1)
 
-        # 3. Organic Smoothing (Gaussian Melt)
-        if self.blur_sigma > 0:
-            k_size = int(6 * self.blur_sigma + 1) | 1 # Ensure odd kernel size
-            final_mask = cv2.GaussianBlur(final_mask.astype(np.float32), (k_size, k_size), self.blur_sigma)
-            final_mask = (final_mask > 0.5).astype(np.uint8)
+        # smoother than gaussian thresholding
+        final_mask = cv2.medianBlur(final_mask, 7)
 
-        return final_mask
+        return (final_mask > 0).astype(np.uint8)
