@@ -22,7 +22,7 @@ from transforms import TrainTransforms, EvalTransforms, PostProcessing
 from utils import get_adamw_param_groups, save_checkpoint, device_setup, setup_logging, handle_shutdown, shutdown_requested
 
 ###-------CONSTANTS-------###
-LEARNING_RATE = 7e-5
+LEARNING_RATE = 6e-5
 WEIGHT_DECAY = 0.01
 WARMUP_EPOCHS = 10
 MODEL_PATH = "model.pt"
