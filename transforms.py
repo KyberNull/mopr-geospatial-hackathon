@@ -32,6 +32,56 @@ def apply_clahe(image):
     img = img.astype(np.float32) / 255.0
     return torch.from_numpy(img).permute(2, 0, 1)
 
+def shadow_correction(image):
+    # image: torch [C,H,W] float [0,1]
+    img = (image.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    l = np.float32(l)
+
+    thresh = np.percentile(l, 35)
+    shadow_mask = l < thresh
+
+    mean_shadow = np.mean(l[shadow_mask]) if np.any(shadow_mask) else 1.0
+    mean_light = np.mean(l[~shadow_mask]) if np.any(~shadow_mask) else 1.0
+
+    scale = mean_light / (mean_shadow + 1e-6)
+
+    l_corrected = l.copy()
+    l_corrected[shadow_mask] *= scale
+    l_corrected = np.clip(l_corrected, 0, 255)
+
+    shadow_mask_blur = cv2.GaussianBlur(
+        shadow_mask.astype(np.float32), (21, 21), 0
+    )
+
+    l_final = shadow_mask_blur * l_corrected + (1 - shadow_mask_blur) * l
+    l_final = np.uint8(l_final)
+
+    # mild CLAHE inside
+    clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8, 8))
+    l_final = clahe.apply(l_final)
+
+    lab_final = cv2.merge((l_final, a, b))
+    result = cv2.cvtColor(lab_final, cv2.COLOR_LAB2RGB)
+
+    result = result.astype(np.float32) / 255.0
+    return torch.from_numpy(result).permute(2, 0, 1)
+
+def _apply_preprocessing(image, mode="original"):
+    if mode == "original":
+        return image
+
+    elif mode == "clahe":
+        return apply_clahe(image)
+
+    elif mode == "shadow":
+        return shadow_correction(image)
+
+    else:
+        return image
+
 class EvalTransforms:
     '''Transforms for evaluation, including resizing and type conversions. 
         Does only resize and type conversions for consistent evaluation.
@@ -53,7 +103,12 @@ class EvalTransforms:
         mask = F.resize(mask, self.size, interpolation=InterpolationMode.NEAREST)
 
         image = F.to_image(image)
-        image = apply_clahe(image)
+        luma = 0.299 * image[0] + 0.587 * image[1] + 0.114 * image[2]
+        contrast_score = torch.std(luma).item()
+
+        if contrast_score < 0.08:
+            image = apply_clahe(image)
+        
         image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
         mask = mask.to(torch.int64)
@@ -64,9 +119,8 @@ class TrainTransforms:
     '''Data augmentation transforms for training,
     including random resized cropPIng, horizontal flipping, and rotation.
     '''
-    def __init__(self, size=(512, 512), rotation_degrees=10):
+    def __init__(self, size=(512, 512)):
         self.size = size
-        self.rotation_degrees = rotation_degrees
         self.flips = v2.Compose([
             v2.RandomHorizontalFlip(),
             v2.RandomVerticalFlip(),
@@ -95,7 +149,24 @@ class TrainTransforms:
         
         #Converting the image to float32 and mask to int64 as only one channel in mask
         image = F.to_image(image)
-        image = apply_clahe(image)
+
+        # Hybrid preprocessing selection
+        luma = 0.299 * image[0] + 0.587 * image[1] + 0.114 * image[2]
+
+        shadow_score = (luma < 0.3).float().mean().item()
+        contrast_score = torch.std(luma).item()
+
+        if shadow_score > 0.3:
+            probs = (0.3, 0.2, 0.5)  # favor shadow correction
+        elif contrast_score < 0.08:
+            probs = (0.3, 0.5, 0.2)  # favor CLAHE
+        else:
+            probs = (0.5, 0.25, 0.25)
+
+        mode = np.random.choice(("original", "clahe", "shadow"), p=probs)
+
+        image = _apply_preprocessing(image, mode)
+
         image = F.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
         mask = mask.to(torch.int64)
