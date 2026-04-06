@@ -1,5 +1,6 @@
 """SegFormer model definition used for semantic segmentation."""
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import segmentation_models_pytorch as smp
@@ -42,3 +43,34 @@ class SegFormer(nn.Module):
             )
             
         return logits
+    
+class TinyRefiner(nn.Module):
+    """A small convolutional network to refine SegFormer outputs. Right now it's only targeting edges"""
+    def __init__(self, in_channels=7, out_channels=4, hidden=32):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(in_channels, hidden, 3, padding=1)
+        self.conv2 = nn.Conv2d(hidden, hidden, 3, padding=1)
+        self.conv3 = nn.Conv2d(hidden, hidden, 3, padding=1)
+        self.conv_out = nn.Conv2d(hidden, out_channels, 1)
+
+        self.act = nn.ReLU(inplace=True)
+
+    def forward(self, rgb, logits):
+        """
+        rgb: (B, 3, H, W)
+        logits: (B, C, H, W)
+        """
+
+        x = torch.cat([rgb, logits], dim=1) # concatenate along channel dimension
+
+        x = self.act(self.conv1(x))
+        x = self.act(self.conv2(x))  # small context boost
+        x = self.act(self.conv3(x))
+
+        delta = self.conv_out(x)
+
+        # residual refinement
+        refined_logits = logits + delta
+
+        return refined_logits
