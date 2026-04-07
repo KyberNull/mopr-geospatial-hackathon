@@ -1,14 +1,9 @@
 """SegFormer model definition used for semantic segmentation."""
 
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import segmentation_models_pytorch as smp
 from torch.utils.checkpoint import checkpoint
-
-# ===========================
-# SegFormer Model
-# ===========================
 
 class SegFormer(nn.Module):
     """
@@ -18,8 +13,6 @@ class SegFormer(nn.Module):
     def __init__(self, num_classes: int, encoder_name: str = "mit_b2", use_gradient_checkpointing: bool = False):
         super().__init__()
         
-        # We use smp.Segformer which implements the MiT backbone and MLP decoder.
-        # mit_b2 is the recommended 'Quality' choice for RTX 50-series.
         self.model = smp.Segformer(
             encoder_name=encoder_name,
             encoder_weights="imagenet",

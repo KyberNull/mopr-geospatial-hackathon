@@ -1,0 +1,11 @@
+"""Configuration values shared across tasks."""
+
+LEARNING_RATE = 6e-5
+WEIGHT_DECAY = 0.01
+WARMUP_EPOCHS = 5
+MODEL_PATH = "model.pt"
+BATCH_SIZE = 8
+NUM_WORKERS = 2
+VAL_INTERVAL = 1
+GRAD_ACCUM_STEPS = 1
+USE_GRADIENT_CHECKPOINTING = False
