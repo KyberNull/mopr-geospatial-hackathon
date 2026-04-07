@@ -1,6 +1,14 @@
 """Per-image evaluation and visualization with metrics shown in matplotlib."""
 
-from datasets import geospatial_dataset
+from config.eval import (
+    IGNORE_LABEL,
+    INPUT_DIR,
+    MASK_DIR,
+    MAX_EXAMPLES_EVAL,
+    NUM_BATCHES_EVAL,
+    NUM_CLASSES_EVAL,
+)
+from config.shared import MODEL_PATH
 import logging
 from losses import iou_metric, iou_metric_processed_fast, pixel_accuracy_metric
 import matplotlib.pyplot as plt
@@ -12,18 +20,13 @@ import sys
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transforms import EvalTransforms, PostProcessing, IMAGENET_MEAN, IMAGENET_STD
+from processing import EvalTransforms, IMAGENET_MEAN, IMAGENET_STD, PostProcessing, GeospatialDataset
 from utils import device_setup, setup_logging, handle_shutdown, shutdown_requested
 
-MODEL_PATH = "model.pt"
 NUM_WORKERS = min(4, os.cpu_count() or 1)
-NUM_BATCHES = 8
-NUM_CLASSES = 4
-MAX_EXAMPLES = 5
-IGNORE_LABEL = 255
-
-INPUT_DIR = "data/input_demo"
-MASK_DIR = "data/masks_demo"
+NUM_BATCHES = NUM_BATCHES_EVAL
+NUM_CLASSES = NUM_CLASSES_EVAL
+MAX_EXAMPLES = MAX_EXAMPLES_EVAL
 
 pin_memory = False
 results_to_view = []
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def test_model():
-    test_dataset = geospatial_dataset(
+    test_dataset = GeospatialDataset(
         img_dir=INPUT_DIR,
         img_mask=MASK_DIR,
         transform=EvalTransforms(),
