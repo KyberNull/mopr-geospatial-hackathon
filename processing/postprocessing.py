@@ -11,7 +11,8 @@ import torch
 class PostProcessing:
     def __init__(self, num_classes):
         self.num_classes = num_classes
-        self.processors = {1: PostProcessingWater(), 2: PostProcessingBuildings(), 3: PostProcessingRoads()}
+        # Global class ids: 0 background, 1 roads, 2 buildings, 3 water.
+        self.processors = {1: PostProcessingRoads(), 2: PostProcessingBuildings(), 3: PostProcessingWater()}
 
     def __call__(self, logits):
         probs = torch.softmax(logits, dim=1)
@@ -37,26 +38,38 @@ class PostProcessing:
 
 
 class PostProcessingRoads:
-    def __init__(self, min_area=800, connect_dist=100, min_branch=50):
+    def __init__(self, min_area=64, connect_dist=80, min_branch=10):
         self.min_area = min_area
         self.connect_dist = connect_dist
         self.min_branch = min_branch
-        self.kernel = np.ones((5, 5), np.uint8)
+        self.kernel = np.ones((3, 3), np.uint8)
 
     def __call__(self, mask):
         if torch.is_tensor(mask):
             mask = mask.cpu().numpy().astype(np.uint8)
         if mask.sum() == 0:
             return mask
+        original_mask = mask.copy()
+
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel)
         mask = remove_small_objects(mask.astype(bool), min_size=self.min_area)
         mask = mask.astype(np.uint8)
+
+        # If pruning removed everything, keep the model prediction.
+        if mask.sum() == 0:
+            return original_mask
+
         dist_map = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
         dist_map = median_filter(dist_map, size=5)
         skeleton = skeletonize(mask > 0)
         skeleton = skeleton.astype(np.uint8)
         skeleton = remove_small_objects(skeleton.astype(bool), min_size=self.min_branch)
         skeleton = skeleton.astype(np.uint8)
+
+        # Skeleton pruning can be too aggressive for thin roads.
+        if skeleton.sum() == 0:
+            return mask
+
         skeleton = self._connect_endpoints(skeleton)
         num_labels, labels = cv2.connectedComponents(skeleton)
         reconstructed = np.zeros_like(mask, dtype=np.uint8)
@@ -64,19 +77,24 @@ class PostProcessingRoads:
         for label in range(1, num_labels):
             component = labels == label
             ys, xs = np.where(component)
-            if len(ys) < 20:
+            if len(ys) < 8:
                 continue
             widths = dist_map[ys, xs]
             widths = widths[widths > 0]
             if len(widths) == 0:
                 continue
-            radius = int(np.median(widths))
+            radius = max(1, int(np.round(np.median(widths))))
             if radius < 1:
                 continue
             for y, x in zip(ys, xs):
                 cv2.circle(reconstructed, (x, y), radius, 1, -1)
 
         reconstructed = cv2.morphologyEx(reconstructed, cv2.MORPH_CLOSE, self.kernel)
+
+        # Preserve cleaned mask if reconstruction is empty.
+        if reconstructed.sum() == 0:
+            return mask
+
         return reconstructed.astype(np.uint8)
 
     def _connect_endpoints(self, skel):
@@ -134,7 +152,7 @@ class PostProcessingBuildings:
 
 
 class PostProcessingWater:
-    def __init__(self, min_area=1000, kernel_size=7):
+    def __init__(self, min_area=500, kernel_size=7):
         self.min_area = min_area
         self.kernel = np.ones((kernel_size, kernel_size), np.uint8)
 
