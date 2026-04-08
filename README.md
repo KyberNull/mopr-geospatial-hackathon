@@ -1,138 +1,142 @@
-> Develop an AI/ML model to identify key features from SVAMITVA Scheme drone orthophotos.
+# 🛰️ MOPR Geospatial Hackathon: Semantic Segmentation from Drone Imagery
 
-# Scope
-- Extract building footprints and classify rooftops (RCC, Tiled, Tin, etc.).
-- Extract road networks and waterbodies.
-- Identify infrastructure locations such as distribution transformers, overhead tanks, wells.
-- Optimize the model for efficient processing and deployment.
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.14+-blue.svg" alt="Python Version">
+  <img src="https://img.shields.io/badge/Model-SegFormer-orange.svg" alt="Model">
+</p>
 
- # 🛰️ MOPR Geospatial Hackathon: Semantic Segmentation from Drone Imagery
+## 🚀 Overview
 
- <p align="center">
-	 <img src="https://img.shields.io/badge/python-3.14+-blue.svg" alt="Python Version">
-	 <img src="https://img.shields.io/badge/Model-SegFormer-orange.svg" alt="Model">
- </p>
+This project builds a deep learning pipeline for **semantic segmentation** of drone orthophotos for the [SVAMITVA Scheme](https://svamitva.nic.in/). It targets building footprint extraction, rooftop-class understanding, road and waterbody mapping, and infrastructure-aware geospatial intelligence.
 
- ## 🚀 Overview
+## ✨ Key Features
 
- This project develops a deep learning pipeline for **semantic segmentation** of drone orthophotos, focusing on extracting building footprints, classifying rooftops, mapping road networks, and identifying key infrastructure for the [SVAMITVA Scheme](https://svamitva.nic.in/). The solution is optimized for efficient processing and deployment on large-scale geospatial datasets.
+- **Two-stage Training:** Pretrain on LoveDA, then Train on target geospatial data
+- **SegFormer Backbone:** Transformer-based segmentation with a practical training stack
+- **Config-Driven Workflow:** Shared and task-specific settings under `config/`
+- **Robust Evaluation:** Quantitative metrics plus qualitative visualization outputs
+- **Reliable Checkpointing:** Resume-safe transitions with model head compatibility handling
 
+## 🗂️ Project Structure
 
- ## ✨ Key Features
+```text
+├── pretrain.py                    # Pretrain entrypoint
+├── train.py                       # Train entrypoint
+├── evaluate.py                    # Evaluation + visualization entrypoint
+├── model.py                       # SegFormer model definition
+├── losses.py                      # Losses and segmentation metrics
+├── utils.py                       # Device/logging/checkpoint helper utilities
+├── model.pt                       # Shared checkpoint artifact
+├── config/
+│   ├── shared.py                  # Shared hyperparameters
+│   ├── pretrain.py                # Pretrain-specific settings
+│   ├── train.py                   # Train-specific settings
+│   └── eval.py                    # Evaluation settings
+├── processing/
+│   ├── dataset.py                 # Dataset classes and loaders
+│   ├── transforms.py              # Data transforms and augmentation
+│   ├── preprocessing.py           # Input preprocessing helpers
+│   └── postprocessing.py          # Mask post-processing helpers
+├── training/
+│   ├── train.py                   # Core training loop
+│   ├── pretrain.py                # Pretrain-related training helpers
+│   ├── phase_io.py                # Checkpoint/data IO helpers
+│   └── primitives.py              # Shared training primitives
+└── data/                          # Local dataset roots and demos
+```
 
- - **Multi-phase Training:** Pretraining on LoveDA, fine-tuning on geospatial targets
- - **SegFormer Backbone:** Modern transformer-based semantic segmentation
- - **Flexible Dataset Support:** Easily extendable for new geospatial datasets
- - **Robust Evaluation:** VOC-style validation and qualitative visualization
- - **Efficient Checkpointing:** Smart resume and phase transition logic
+## ⚙️ Installation & Environment Setup
 
-
- ## 🗂️ Project Structure
-
- ```text
- ├── train.py           # Phase 3: Fine-tuning on geospatial dataset
- ├── pretrain.py        # Phase 2: Pretraining on LoveDA
- ├── evaluate.py        # Evaluation and visualization
- ├── model.py           # SegFormer model definition
- ├── datasets.py        # Dataset loading utilities
- ├── losses.py          # Loss functions and metrics
- ├── transforms.py      # Data augmentation and transforms
- ├── utils.py           # Utility functions
- ├── model.pt           # Shared model checkpoint
- ├── data/              # Data directory (see below)
- └── ...
- ```
-
- **Data Directory Layout:**
- ```text
- data/
-	 phase-2/   # LoveDA dataset
-	 phase-3/   # Target geospatial dataset
- ```
-
-
- ## ⚙️ Installation & Environment Setup
-
- This project uses [uv](https://github.com/astral-sh/uv) for fast Python dependency management.
-
- ```bash
- uv sync
- source .venv/bin/activate
- ```
-
-
- ## 🏋️ Training & Evaluation Workflow
-
- Run each phase in order for best results:
-
- ```bash
- # Phase 1: Pretrain on LoveDA
- uv run pretrain.py
-
- # Phase 2: Fine-tune on geospatial dataset
- uv run train.py
-
- # Evaluate
- uv run evaluate.py
- ```
-
- Or use the provided VS Code tasks: **Pretrain**, **Train**, **Evaluate**.
-
-
- ## 🧠 Model Details
-
- - **Architecture:** [SegFormer](https://arxiv.org/abs/2105.15203) (MiT-b2 backbone, via `segmentation_models_pytorch`)
- - **Losses:** Dice, Focal, IoU
- - **Metrics:** mIoU, per-class IoU, pixel accuracy
- - **Checkpoints:** All phases read/write `model.pt` (auto-handles class-count transitions)
-
-
- ## 📊 Results & Visualizations
-
- \[WIP\] Example outputs and validation metrics will be shown here after training.
-
- ## 🙏 Acknowledgements
-
- - [SVAMITVA Scheme](https://svamitva.nic.in/)
- - [SegFormer Paper](https://arxiv.org/abs/2105.15203)
- - [LoveDA Dataset](https://github.com/Junjue-Wang/LoveDA)
- - [segmentation_models.pytorch](https://github.com/qubvel/segmentation_models.pytorch)
-
-## Environment Setup
-This repo uses `uv` and `pyproject.toml` (no `.env`-driven runtime configuration in current code).
+This repository uses [uv](https://github.com/astral-sh/uv) and `pyproject.toml` for dependency management.
 
 ```bash
 uv sync
+source .venv/bin/activate
 ```
 
-## Training Workflow
-Run phases in order:
+## ⚙️ Configuration
+
+Runtime behavior is controlled through files in `config/` (not CLI flags).
+
+**Shared defaults** (`config/shared.py`):
+
+- `LEARNING_RATE = 6e-5`
+- `WEIGHT_DECAY = 0.01`
+- `WARMUP_EPOCHS = 5`
+- `BATCH_SIZE = 8`
+- `NUM_WORKERS = 2`
+- `VAL_INTERVAL = 1`
+- `GRAD_ACCUM_STEPS = 1`
+- `USE_GRADIENT_CHECKPOINTING = False`
+- `MODEL_PATH = "model.pt"`
+
+**Pretrain defaults** (`config/pretrain.py`):
+
+- `NUM_CLASSES_PRETRAIN = 8`
+- `NUM_EPOCHS_PRETRAIN = 20`
+- `NUM_VAL_SAMPLES_PRETRAIN = 150`
+- `PRETRAIN_DATA_ROOT = "./data/phase-2"`
+
+**Train defaults** (`config/train.py`):
+
+- `NUM_CLASSES_TRAIN = 4`
+- `NUM_EPOCHS_TRAIN = NUM_EPOCHS_PRETRAIN + 50`
+- `NUM_VAL_SAMPLES_TRAIN = 280`
+- `TRAIN_IMG_DIR = "data/phase-3/TrainningDataset/processed_datasets"`
+- `TRAIN_MASK_DIR = "data/phase-3/TrainningDataset/processed_masks"`
+- `VAL_IMG_DIR = "data/phase-3/ValidationDataset/processed_datasets"`
+- `VAL_MASK_DIR = "data/phase-3/ValidationDataset/processed_masks"`
+
+## 💾 Data Setup
+
+**Pretrain data (LoveDA)**
+
+- Expected root: `data/phase-2/`
+- Scenes configured by default: `rural`, `urban`
+
+**Train data (target geospatial dataset)**
+
+- Train images: `data/phase-3/TrainningDataset/processed_datasets`
+- Train masks: `data/phase-3/TrainningDataset/processed_masks`
+- Val images: `data/phase-3/ValidationDataset/processed_datasets`
+- Val masks: `data/phase-3/ValidationDataset/processed_masks`
+
+**Mask convention**
+
+- Label value `255` is treated as ignore region for VOC-style masks.
+
+## 🏋️ Training & Evaluation Workflow
+
+Run in this order for best results:
 
 ```bash
+# 1) Pretrain
 uv run pretrain.py
+
+# 2) Train
 uv run train.py
-```
 
-Equivalent VS Code tasks are also available: `Pretrain`, `Train`, and `Evaluate`.
-
-## Checkpoint and Resume Semantics
-- All phases read/write `model.pt`.
-- On class-count mismatch (for example 21->7 or 7->4), segmentation head weights are dropped and training state is reset for a clean phase transition.
-- Optimizer/scheduler/scaler states are resumed only for true in-phase continuation.
-- This prevents mixed optimizer/scheduler state and unintended LR carry-over across phases.
-
-## Notes on Stability
-- Ignore label `255` is used where applicable (`CrossEntropyLoss(ignore_index=255)` in phase 2).
-- If loss becomes `NaN`, do not continue from that checkpoint; restart from the latest known-good checkpoint (or phase boundary) with fresh optimizer/scheduler state.
-- Monitor LR in logs; abrupt spikes usually indicate resume-state mismatch or schedule misalignment.
-
-## Evaluation
-
-```bash
+# 3) Evaluate
 uv run evaluate.py
 ```
 
-`evaluate.py` reports `mCEL` and `mIoU`, and can display qualitative predictions.
+Equivalent VS Code tasks are available: `Pretrain`, `Train`, and `Evaluate`.
 
-## Data Note
-For VOC-style masks, label value `255` means ignore region. During plotting, mask ignored pixels if you want class colors to be visually consistent.
+## 🧠 Model & Training Details
+
+- **Architecture:** [SegFormer](https://arxiv.org/abs/2105.15203) (MiT-b2 via `segmentation_models_pytorch`)
+- **Primary metrics:** mIoU, per-class IoU, pixel accuracy
+- **Evaluation script outputs:** Mean Pixel Accuracy, Mean IoU, and processed-mask variants
+- **Checkpoints:** Pretrain/Train flows read and write `model.pt`
+- **Resume behavior:** On class-count mismatch, incompatible segmentation head state is dropped to allow clean continuation
+
+## 📊 Results & Visualizations
+
+`evaluate.py` computes metrics and displays side-by-side plots for input, ground truth, prediction, and processed prediction.
+
+## 🙏 Acknowledgements
+
+- [SVAMITVA Scheme](https://svamitva.nic.in/)
+- [SegFormer Paper](https://arxiv.org/abs/2105.15203)
+- [LoveDA Dataset](https://github.com/Junjue-Wang/LoveDA)
+- [segmentation_models.pytorch](https://github.com/qubvel/segmentation_models.pytorch)
