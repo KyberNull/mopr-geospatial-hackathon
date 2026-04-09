@@ -51,7 +51,7 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch: int, path: str):
     }, path)
 
 def get_adamw_param_groups(model, weight_decay: float) -> list[dict]:
-    '''Prepares parameter groups for AdamW optimizer with differential learning rates and weight decay.'''
+    """Prepares parameter groups for AdamW optimizer with differential learning rates and weight decay."""
     weight_decay_params = [] # For weights in the decoder that should have weight decay
     no_weight_decay_params = [] # For biases and normalization parameters in the decoder that should not have weight decay
 

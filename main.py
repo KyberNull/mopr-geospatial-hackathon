@@ -1,3 +1,12 @@
+from config.inference import (
+    NUM_CLASSES_INFERENCE,
+    PATCH_SIZE,
+    STRIDE,
+    TEMP_DATASET_DIR,
+    TEMP_MASK_DIR,
+    USE_TORCH_COMPILE,
+)
+from config.shared import MODEL_PATH
 """This script implements a complete pipeline for processing large geospatial .tiff images using a SegFormer"""
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -14,7 +23,7 @@ from rasterio import features
 import torch
 from torchvision import tv_tensors
 from tqdm import tqdm
-from transforms import EvalTransforms, PostProcessing
+from processing import EvalTransforms, PostProcessing
 import shutil
 from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, shape
 from shapely.ops import unary_union
@@ -30,15 +39,11 @@ logger = logging.getLogger(__name__)
 PILImage.MAX_IMAGE_PIXELS = None
 
 #Configuration
-PATCH_SIZE = 1024
-STRIDE = PATCH_SIZE
-NUM_CLASSES = 4 
-MODEL_PATH = "model.pt"
-USE_TORCH_COMPILE = True
+NUM_CLASSES = NUM_CLASSES_INFERENCE
 
 # Folder Setup
-DATASET_DIR = "processed_datasets"
-MASK_DIR = "processed_masks"
+DATASET_DIR = TEMP_DATASET_DIR
+MASK_DIR = TEMP_MASK_DIR
 os.makedirs(DATASET_DIR, exist_ok=True)
 os.makedirs(MASK_DIR, exist_ok=True)
 
