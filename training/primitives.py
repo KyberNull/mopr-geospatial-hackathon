@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from tqdm import tqdm
 
 from losses import iou_metric, iou_metric_processed_fast
-
+from segmentation_models_pytorch.losses import LovaszLoss
 
 def train_batch(
     *,
@@ -38,6 +38,9 @@ def train_batch(
     running_loss = 0.0
     optimizer.zero_grad(set_to_none=True)
 
+    
+    ll = LovaszLoss(mode="multiclass", ignore_index=0)
+
     for batch, (input_tensor, output_tensor) in enumerate(epoch_bar):
         if should_stop():
             save_checkpoint_fn(model, optimizer, scheduler, scaler, epoch, model_path)
@@ -50,7 +53,7 @@ def train_batch(
             backends = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
             with sdpa_kernel(backends=backends, set_priority=True):
                 prediction = model(input_tensor)
-            loss = criterion(prediction, output_tensor)
+            loss = criterion(prediction, output_tensor) + ll(prediction, output_tensor)
             loss += dice_loss_fn(prediction, output_tensor, num_classes)
 
         if not torch.isfinite(loss):
