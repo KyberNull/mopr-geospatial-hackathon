@@ -12,8 +12,7 @@ from torchvision.transforms.v2 import functional as F
 class TrainTransforms:
     """Data augmentation transforms used during training."""
 
-    def __init__(self, size=(512, 512)):
-        self.size = size
+    def __init__(self):
         self.flips = v2.Compose([v2.RandomHorizontalFlip(), v2.RandomVerticalFlip()])
         self.rotate90 = v2.RandomChoice([
             v2.RandomRotation((0, 0)),
@@ -31,8 +30,6 @@ class TrainTransforms:
                 raise TypeError("Invalid arguments")
         image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
         image = F.to_dtype(image, torch.float32, scale=True)
-        image = torch.nn.functional.interpolate(image.unsqueeze(0), self.size, mode="area", antialias=False).squeeze(0)
-        mask = F.resize(mask, self.size, interpolation=InterpolationMode.NEAREST)
         image, mask = self.flips(image, mask)
         image, mask = self.rotate90(image, mask)
         image = F.to_image(image)
@@ -57,9 +54,6 @@ class TrainTransforms:
 class EvalTransforms:
     """Resize and normalize transforms used for eval/inference."""
 
-    def __init__(self, size=(512, 512)):
-        self.size = size
-
     def __call__(self, image, mask=None):
         if mask is None:
             if isinstance(image, dict):
@@ -69,8 +63,6 @@ class EvalTransforms:
                 raise TypeError("Invalid arguments")
         image, mask = tv_tensors.Image(image), tv_tensors.Mask(mask)
         image = F.to_dtype(image, torch.float32, scale=True)
-        image = torch.nn.functional.interpolate(image.unsqueeze(0), self.size, mode="area", antialias=False).squeeze(0)
-        mask = F.resize(mask, self.size, interpolation=InterpolationMode.NEAREST)
         image = F.to_image(image)
         luma = 0.299 * image[0] + 0.587 * image[1] + 0.114 * image[2]
         contrast_score = torch.std(luma).item()
