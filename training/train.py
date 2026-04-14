@@ -23,7 +23,9 @@ from config.shared import (
 	NUM_WORKERS,
 	PREFETCH_FACTOR,
 	USE_GRADIENT_CHECKPOINTING,
+	USE_TORCH_COMPILE,
 	VAL_INTERVAL,
+	VAL_BATCH_SIZE,
 	WARMUP_EPOCHS,
 	WEIGHT_DECAY,
 )
@@ -48,7 +50,11 @@ def main(device, model_path, pin_memory, amp_dtype, logger):
 		raise ValueError(f"GRAD_ACCUM_STEPS must be >= 1, got {GRAD_ACCUM_STEPS}")
 
 	model = SegFormer(num_classes=NUM_CLASSES, use_gradient_checkpointing=USE_GRADIENT_CHECKPOINTING)
-	model = torch.compile(model)
+	if USE_TORCH_COMPILE and hasattr(torch, "compile"):
+		try:
+			model = torch.compile(model)
+		except RuntimeError as err:
+			logger.warning(f"torch.compile disabled due to runtime error: {err}")
 	model = model.to(device=device, non_blocking=True)
 
 	train_loader, validation_loader = get_train_dataloaders(
@@ -63,6 +69,7 @@ def main(device, model_path, pin_memory, amp_dtype, logger):
 		num_workers=NUM_WORKERS,
 		prefetch_factor=PREFETCH_FACTOR,
 		pin_memory=pin_memory,
+		val_batch_size=VAL_BATCH_SIZE,
 	)
 
 	optimizer = optim.AdamW(get_adamw_param_groups(model, WEIGHT_DECAY), lr=LEARNING_RATE)

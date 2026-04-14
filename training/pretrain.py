@@ -20,7 +20,9 @@ from config.shared import (
 	NUM_WORKERS,
 	PREFETCH_FACTOR,
 	USE_GRADIENT_CHECKPOINTING,
+	USE_TORCH_COMPILE,
 	VAL_INTERVAL,
+	VAL_BATCH_SIZE,
 	WARMUP_EPOCHS,
 	WEIGHT_DECAY,
 )
@@ -57,9 +59,14 @@ def main(device, model_path, pin_memory, amp_dtype, logger):
 		num_workers=NUM_WORKERS,
 		prefetch_factor=PREFETCH_FACTOR,
 		pin_memory=pin_memory,
+		val_batch_size=VAL_BATCH_SIZE,
 	)
 
-	model = torch.compile(model)
+	if USE_TORCH_COMPILE and hasattr(torch, "compile"):
+		try:
+			model = torch.compile(model)
+		except RuntimeError as err:
+			logger.warning(f"torch.compile disabled due to runtime error: {err}")
 	model, optimizer, scheduler, scaler, start_epoch, train_loader = load_checkpoint_pretrain(
 		model_path=model_path,
 		model=model,
